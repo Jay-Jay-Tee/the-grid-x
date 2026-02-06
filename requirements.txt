@@ -1,0 +1,7 @@
+docker==6.1.3
+psutil==5.9.8
+nvidia-ml-py==12.535.133
+asyncio==3.4.3
+aiohttp==3.9.1
+pydantic==2.5.3
+python-dotenv==1.0.0

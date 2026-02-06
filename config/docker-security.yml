@@ -1,0 +1,81 @@
+# Docker Security Configuration for Grid-X
+# This file documents security best practices for Docker containers
+
+security:
+  # User namespace isolation
+  user_namespace: true
+  user: "1000:1000"  # Non-root user
+
+  # Capabilities
+  drop_all_capabilities: true
+  add_capabilities:
+    - CHOWN
+    - SETGID
+    - SETUID
+
+  # Security options
+  security_opt:
+    - "no-new-privileges:true"
+    - "apparmor:docker-default"
+    - "seccomp=default.json"
+
+  # Resource limits
+  resources:
+    cpu:
+      quota: 100000  # 1 CPU core
+      period: 100000
+    memory:
+      limit: "512m"
+      swap: "0"  # Disable swap
+    pids:
+      limit: 100
+
+  # Network
+  network_mode: "none"  # Disable network access
+  # Alternative: bridge with restrictions
+  # network_mode: "bridge"
+  # network_aliases: []
+
+  # Filesystem
+  read_only: true
+  tmpfs:
+    - "/tmp:rw,noexec,nosuid,size=100m"
+    - "/run:rw,noexec,nosuid,size=100m"
+
+  # Volumes
+  # NO bind mounts from host filesystem
+  # Only use named volumes for workspace
+  volumes:
+    - type: volume
+      source: grid-x-workspace
+      target: /workspace
+      read_only: false
+
+  # Environment
+  environment:
+    - "HOME=/workspace"
+    - "PATH=/usr/local/bin:/usr/bin:/bin"
+    - "TMPDIR=/tmp"
+
+  # Health check
+  healthcheck:
+    test: ["CMD", "true"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+
+  # Restart policy
+  restart_policy: "no"  # Never restart automatically
+
+  # Logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+  # Labels for tracking
+  labels:
+    - "grid-x.managed=true"
+    - "grid-x.security=enabled"
