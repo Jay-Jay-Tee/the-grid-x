@@ -18,9 +18,9 @@ from ws_worker_adapter import handle_assign_job
 from resource_monitor import ResourceMonitor
 
 # Coordinator WebSocket URL. When coordinator runs on another machine, set e.g.:
-#   COORDINATOR_WS=ws://192.168.1.10:8080/ws/worker
+COORDINATOR_WS="ws://192.168.42.38:8080/ws/worker"
 #   or COORDINATOR_WS=ws://coordinator.example.com:8080/ws/worker
-COORDINATOR_WS = os.getenv("COORDINATOR_WS", "ws://localhost:8080/ws/worker")
+#   COORDINATOR_WS = os.getenv("COORDINATOR_WS", "ws://localhost:8080/ws/worker")
 
 # Optional: user_id that receives credits when this worker runs jobs (owner of this machine)
 WORKER_OWNER_ID = os.getenv("WORKER_OWNER_ID", "")
