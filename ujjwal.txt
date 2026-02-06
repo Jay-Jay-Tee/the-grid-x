@@ -1,3 +1,6 @@
+THE NEW ONE
+
+
 Final backend architecture (MVP, LAN-only, WebSockets, Docker job execution)
 Components
 
