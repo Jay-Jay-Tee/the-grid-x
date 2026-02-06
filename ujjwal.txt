@@ -1,0 +1,232 @@
+Best choice for hackathon (VM-hosted) with Docker sandbox
+
+Isolation: Hardened Docker per job on provider VMs (fast, good enough for hackathon).
+
+Transport: WebSockets for control plane (assignments, heartbeats, logs, status).
+
+Artifacts (inputs/outputs): HTTP upload/download (do not send binaries over WS).
+
+Backend: Single Coordinator VM (Node.js + TypeScript + ws) + SQLite + filesystem artifacts.
+
+Clients:
+
+Provider Agent (Python) connects via WS, runs Docker jobs, streams logs.
+
+Requester Web UI (Next.js) connects via WS to submit/monitor jobs.
+
+This is the most reliable demo architecture under time pressure.
+
+Final list of files (complete, minimal, hackathon-ready)
+Repo root
+
+README.md — setup, run, demo steps
+
+.gitignore
+
+docker-compose.dev.yml — optional: starts coordinator + web (provider runs separately)
+
+.env.example — top-level env pointers (optional)
+
+1) Coordinator (VM backend)
+
+Path: apps/coordinator/
+
+Core
+
+apps/coordinator/package.json
+
+apps/coordinator/tsconfig.json
+
+apps/coordinator/.env.example
+
+apps/coordinator/src/index.ts — boot HTTP + WS servers
+
+apps/coordinator/src/config.ts — env parsing (PORT, DATA_DIR, DB_PATH, CORS, etc.)
+
+WebSocket gateway
+
+apps/coordinator/src/ws/server.ts — WS server init, connection lifecycle
+
+apps/coordinator/src/ws/router.ts — routes by message type
+
+apps/coordinator/src/ws/auth.ts — simple token/auth for provider/requester
+
+apps/coordinator/src/ws/rooms.ts — job rooms + provider rooms
+
+apps/coordinator/src/ws/types.ts — WS message types (runtime validation)
+
+HTTP APIs (artifacts + health)
+
+apps/coordinator/src/http/app.ts — express app setup (CORS, JSON, limits)
+
+apps/coordinator/src/http/routes/health.ts — GET /health
+
+apps/coordinator/src/http/routes/artifacts.ts — POST /artifacts/upload, GET /artifacts/:id
+
+apps/coordinator/src/http/routes/jobs.ts — GET /jobs/:id, GET /jobs (for UI)
+
+Scheduler
+
+apps/coordinator/src/scheduler/matcher.ts — choose provider for queued jobs
+
+apps/coordinator/src/scheduler/queue.ts — enqueue, dequeue, requeue on failure
+
+apps/coordinator/src/scheduler/timeouts.ts — ACK timeout, heartbeat timeout
+
+Storage (SQLite + filesystem)
+
+apps/coordinator/src/storage/db.ts — sqlite init + migrations
+
+apps/coordinator/src/storage/migrations/001_init.sql — jobs/providers tables
+
+apps/coordinator/src/storage/jobs.ts — CRUD for jobs
+
+apps/coordinator/src/storage/providers.ts — CRUD for providers
+
+apps/coordinator/src/storage/artifacts.ts — artifact metadata + file paths
+
+Utilities
+
+apps/coordinator/src/utils/id.ts — ids (jobId, artifactId)
+
+apps/coordinator/src/utils/validate.ts — schema validation helpers
+
+apps/coordinator/src/utils/logger.ts — structured logs
+
+Runtime data dirs
+
+apps/coordinator/data/.gitkeep — local dev placeholder
+
+apps/coordinator/data/artifacts/.gitkeep
+
+apps/coordinator/data/sqlite/.gitkeep
+
+2) Provider Agent (runs on provider VM; executes Docker sandbox)
+
+Path: nodes/provider/
+
+Core
+
+nodes/provider/pyproject.toml — dependencies (websockets, requests, psutil, docker)
+
+nodes/provider/.env.example — COORDINATOR_URL, PROVIDER_TOKEN, PROVIDER_ID, WORK_DIR
+
+nodes/provider/provider/main.py — entrypoint; connect WS, heartbeat loop, job loop
+
+nodes/provider/provider/config.py — env parsing + defaults
+
+nodes/provider/provider/ws_client.py — WS connect/reconnect, send/receive, routing
+
+nodes/provider/provider/protocol.py — message types/constants (must match shared spec)
+
+Job execution
+
+nodes/provider/provider/job_runner.py — orchestrates a job lifecycle
+
+nodes/provider/provider/docker_runner.py — hardened Docker run + log streaming
+
+nodes/provider/provider/sandbox_policy.py — the enforced security policy (caps drop, ro fs, net none, limits)
+
+nodes/provider/provider/artifacts.py — download input from coordinator, upload output via HTTP
+
+nodes/provider/provider/metering.py — basic stats (runtime, exit code, cpu/mem if available)
+
+Provider controls
+
+nodes/provider/provider/idle.py — optional “only when idle” (psutil CPU threshold)
+
+nodes/provider/provider/state.py — available/busy/paused, current job
+
+Install/run scripts
+
+nodes/provider/scripts/install_ubuntu.sh — install docker + python deps
+
+nodes/provider/scripts/run_provider.sh — exports env and runs provider
+
+3) Requester Web UI (submits and watches jobs)
+
+Path: apps/web/
+
+Core
+
+apps/web/package.json
+
+apps/web/next.config.js
+
+apps/web/.env.example — NEXT_PUBLIC_COORDINATOR_HTTP, NEXT_PUBLIC_COORDINATOR_WS
+
+apps/web/app/page.tsx — dashboard (providers + recent jobs)
+
+apps/web/app/submit/page.tsx — submit job
+
+apps/web/app/jobs/[id]/page.tsx — logs/status/output download
+
+UI components
+
+apps/web/components/JobForm.tsx
+
+apps/web/components/LogViewer.tsx
+
+apps/web/components/JobStatusBadge.tsx
+
+apps/web/components/ProviderTable.tsx
+
+Client libs
+
+apps/web/lib/api.ts — HTTP calls (submit job, list jobs, download output)
+
+apps/web/lib/ws.ts — WS connect, subscribe to job room, events
+
+apps/web/lib/types.ts — TS types matching shared protocol
+
+4) Shared protocol (single source of truth)
+
+Path: shared/protocol/
+
+shared/protocol/message_types.md — human-readable spec of WS/HTTP messages
+
+shared/protocol/job.schema.json — job spec schema (MVP)
+
+shared/protocol/ws.schema.json — WS message envelope + event schemas
+
+(Provider + Coordinator must match these.)
+
+5) Docs for judges (recommended, minimal)
+
+Path: shared/docs/
+
+shared/docs/threat_model.md — “no host mounts, non-root, ro fs, net none, limits”
+
+shared/docs/demo_script.md — step-by-step demo runbook
+
+Minimum WS message types you will implement (MVP)
+
+provider.hello, provider.heartbeat
+
+requester.hello
+
+job.submit, job.submitted
+
+job.assign, job.ack
+
+job.status
+
+job.log
+
+job.complete, job.failed
+
+Artifacts via HTTP:
+
+POST /artifacts/upload (provider uploads output zip)
+
+GET /artifacts/:id (requester downloads)
+
+If you implement exactly the file list above, you have everything needed for:
+
+WS-based coordinator + clients
+
+Docker sandbox execution on provider VMs
+
+Live logs + output download
+
+Reliable hackathon demo without P2P complexity
