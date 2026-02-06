@@ -15,7 +15,9 @@ from task_executor import TaskExecutor
 from ws_worker_adapter import handle_assign_job
 from resource_monitor import ResourceMonitor
 
-COORDINATOR_WS = os.getenv("COORDINATOR_WS", "ws://localhost:8080/ws/worker")
+COORDINATOR_WS = "ws://192.168.42.38:8081/ws"
+
+# COORDINATOR_WS = os.getenv("COORDINATOR_WS", "ws://192.168.42.38/ws")
 
 async def worker_loop():
     worker_id = str(uuid.uuid4())
@@ -27,6 +29,9 @@ async def worker_loop():
     asyncio.create_task(executor.start_executor())
 
     async with websockets.connect(COORDINATOR_WS) as ws:
+        await ws.send("hello_from_worker")
+        reply = await ws.recv()
+        print("COORDINATOR SAYS:", reply)
         # Say hello
         await ws.send(json.dumps({
             "type": "hello",
