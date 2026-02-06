@@ -122,11 +122,12 @@ def main() -> None:
     print("Set COORDINATOR_WS=ws://<this-host>:{}/ws/worker on worker machines.".format(ws_port))
 
     async def run_both() -> None:
-        ws_task = asyncio.create_task(run_ws())
+        ws_task = asyncio.create_task(run_ws())  # should bind to ws_port inside run_ws()
         config = uvicorn.Config(app, host="0.0.0.0", port=http_port, log_level="info")
         server = uvicorn.Server(config)
         http_task = asyncio.create_task(server.serve())
         await asyncio.gather(ws_task, http_task)
+
 
     asyncio.run(run_both())
 
