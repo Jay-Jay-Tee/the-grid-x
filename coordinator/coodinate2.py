@@ -127,7 +127,7 @@ async def dispatch():
         while not job_queue.empty():
             # find first idle connected worker
             idle_id: Optional[str] = None
-            for wid, w in workers_ws.items():
+            for wid, w in list(workers_ws.items()):
                 if w["status"] == "idle":
                     idle_id = wid
                     break
@@ -215,7 +215,8 @@ async def handle_worker(ws: WebSocketServerProtocol):
             async with lock:
                 if worker_id in workers_ws:
                     workers_ws[worker_id]["last_seen"] = now()
-            db_set_worker_status(worker_id, workers_ws[worker_id]["status"])
+            if worker_id in workers_ws:
+                db_set_worker_status(worker_id, workers_ws[worker_id]["status"])
 
             if t == "hb":
                 continue
@@ -259,10 +260,7 @@ async def handle_worker(ws: WebSocketServerProtocol):
                        ("offline", now(), worker_id))
             DB.commit()
 
-async def ws_router(ws: WebSocketServerProtocol):
-    if ws.path != "/ws/worker":
-        await ws.close(code=1008, reason="Invalid path")
-        return
+async def ws_router(ws):
     await handle_worker(ws)
 
 async def run_ws():
@@ -319,9 +317,32 @@ async def get_job(job_id: str):
 async def list_workers():
     return db_list_workers()
 
+@app.post("/workers/register")
+async def register_worker_http(body: Dict[str, Any]):
+    """HTTP worker registration for simple workers (non-WS). Expects {"id": "<worker_id>", "caps": {...}}"""
+    worker_id = body.get("id")
+    if not worker_id:
+        raise HTTPException(400, "Missing 'id' in body")
+    caps = body.get("caps", {"cpu_cores": 0, "gpu": False})
+    ip = body.get("ip", "http-worker")
+    # Persist worker in DB; no websocket associated
+    db_upsert_worker(worker_id, ip, caps, "idle")
+    return {"ok": True, "worker_id": worker_id}
+
 @app.post("/workers/{worker_id}/heartbeat")
 async def heartbeat(worker_id: str):
     # Optional heartbeat endpoint mentioned in the doc plan. :contentReference[oaicite:5]{index=5}
+    DB.execute("UPDATE workers SET last_heartbeat=? WHERE id=?", (now(), worker_id))
+    DB.commit()
+    return {"ok": True, "worker_id": worker_id, "ts": now()}
+
+
+@app.post("/workers/heartbeat")
+async def heartbeat_http(body: Dict[str, Any]):
+    """Legacy/simple heartbeat endpoint used by `main.py` which posts JSON {"id": worker_id}."""
+    worker_id = body.get("id")
+    if not worker_id:
+        raise HTTPException(400, "Missing 'id' in body")
     DB.execute("UPDATE workers SET last_heartbeat=? WHERE id=?", (now(), worker_id))
     DB.commit()
     return {"ok": True, "worker_id": worker_id, "ts": now()}
