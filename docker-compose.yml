@@ -1,0 +1,35 @@
+# Grid-X: coordinator (one instance) + worker (one or more).
+# Coordinator and worker can run on different hosts: set COORDINATOR_WS on worker to coordinator's URL.
+# This file runs both on the same host for local/dev; for two machines, run coordinator service on one host, worker on the other.
+
+services:
+  coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"   # WebSocket (workers)
+      - "8081:8081"   # HTTP API
+    volumes:
+      - gridx-data:/data
+    environment:
+      - GRIDX_HTTP_PORT=8081
+      - GRIDX_WS_PORT=8080
+      - GRIDX_DB_PATH=/data/gridx.db
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    environment:
+      # Point to coordinator (same host here; use coordinator hostname when on another machine)
+      - COORDINATOR_WS=ws://coordinator:8080/ws/worker
+      # Optional: user_id that earns credits when this worker runs jobs
+      - WORKER_OWNER_ID=
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - coordinator
+
+volumes:
+  gridx-data:

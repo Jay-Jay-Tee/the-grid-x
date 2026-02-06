@@ -1,0 +1,32 @@
+# Grid-X
+.env
+*.db
+coordinator/gridx.db
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# Node (sdk, ui)
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/

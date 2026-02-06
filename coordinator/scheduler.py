@@ -1,0 +1,124 @@
+"""
+Grid-X Coordinator - Job assignment logic (FIFO + first idle worker).
+"""
+
+import asyncio
+import json
+from typing import Any, Dict, Optional
+
+from database import (
+    get_db,
+    db_get_job,
+    db_set_job_assigned,
+    db_set_job_completed,
+    db_set_job_running,
+    db_set_worker_status,
+    db_get_worker,
+)
+from workers import (
+    get_idle_worker_id,
+    get_worker_ws,
+    lock,
+    set_worker_busy,
+    set_worker_idle,
+    unregister_worker_ws,
+)
+from credit_manager import credit, get_worker_reward
+
+# Job queue: job_id strings
+job_queue: asyncio.Queue[str] = asyncio.Queue()
+
+
+async def dispatch() -> None:
+    """
+    FIFO + first idle worker. Assigns queued jobs to idle workers over WebSocket.
+    On job completion, credits worker owner.
+    """
+    try:
+        async with lock:
+            while not job_queue.empty():
+                idle_id: Optional[str] = get_idle_worker_id()
+                if idle_id is None:
+                    return
+
+                try:
+                    job_id = job_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+
+                job_row = db_get_job(job_id)
+                if not job_row:
+                    continue
+
+                set_worker_busy(idle_id)
+                db_set_worker_status(idle_id, "busy")
+                db_set_job_assigned(job_id, idle_id)
+
+                job_msg = {
+                    "type": "assign_job",
+                    "job": {
+                        "job_id": job_id,
+                        "kind": job_row["language"] or "python",
+                        "payload": {"script": job_row["code"]},
+                        "limits": {
+                            "cpus": 1,
+                            "memory": "256m",
+                            "timeout_s": 30,
+                        },
+                    },
+                }
+
+                ws = get_worker_ws(idle_id)
+                if not ws:
+                    # Revert and re-queue
+                    set_worker_idle(idle_id)
+                    db_set_worker_status(idle_id, "idle")
+                    get_db().execute(
+                        "UPDATE jobs SET status=?, worker_id=? WHERE id=?",
+                        ("queued", None, job_id),
+                    )
+                    get_db().commit()
+                    await job_queue.put(job_id)
+                    return
+
+                try:
+                    await ws.send(json.dumps(job_msg))
+                except Exception:
+                    set_worker_idle(idle_id)
+                    db_set_worker_status(idle_id, "idle")
+                    get_db().execute(
+                        "UPDATE jobs SET status=?, worker_id=? WHERE id=?",
+                        ("queued", None, job_id),
+                    )
+                    get_db().commit()
+                    await job_queue.put(job_id)
+                    return
+    except Exception:
+        pass
+
+
+def on_job_started(job_id: str) -> None:
+    db_set_job_running(job_id)
+
+
+def on_job_result(
+    job_id: str,
+    worker_id: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    db_set_job_completed(job_id, stdout, stderr, exit_code)
+    set_worker_idle(worker_id)
+    db_set_worker_status(worker_id, "idle")
+
+    # Credit worker owner when their compute is used
+    worker_row = db_get_worker(worker_id)
+    if worker_row and worker_row.get("owner_id"):
+        owner_id = (worker_row.get("owner_id") or "").strip()
+        if owner_id:
+            reward = get_worker_reward()
+            credit(owner_id, reward)
+
+    # Dispatch next job (caller should await dispatch() after this)
+    asyncio.create_task(dispatch())
