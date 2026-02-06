@@ -11,6 +11,9 @@ from websockets.server import WebSocketServerProtocol
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from fastapi import WebSocket
+
+
 
 DB_PATH = "gridx.db"
 
@@ -277,6 +280,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.websocket("/ws")
+async def ws_entry(ws: WebSocket):
+    print("WS Connect Attempt")
+    await ws.accept()
+    
+    try:
+        while True:
+            msg = await ws.receive_text()
+            print("From Worker:", msg)
+
+            await ws.send_text("Ack")
+    except Exception as e:
+        print("Ws Closed:", e)
 
 @app.post("/jobs")
 async def submit_job(body: Dict[str, Any]):
