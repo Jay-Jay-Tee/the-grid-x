@@ -1,232 +1,274 @@
-Best choice for hackathon (VM-hosted) with Docker sandbox
+Final backend architecture (MVP, LAN-only, WebSockets, Docker job execution)
+Components
 
-Isolation: Hardened Docker per job on provider VMs (fast, good enough for hackathon).
+Coordinator (Manager laptop)
 
-Transport: WebSockets for control plane (assignments, heartbeats, logs, status).
+Service: gridx-coordinator
 
-Artifacts (inputs/outputs): HTTP upload/download (do not send binaries over WS).
+Responsibilities:
 
-Backend: Single Coordinator VM (Node.js + TypeScript + ws) + SQLite + filesystem artifacts.
+Accept workers over WebSockets.
 
-Clients:
+Accept job submissions (HTTP or WS).
 
-Provider Agent (Python) connects via WS, runs Docker jobs, streams logs.
+Maintain worker registry + job queue.
 
-Requester Web UI (Next.js) connects via WS to submit/monitor jobs.
+Assign jobs to workers (simple FIFO + first-idle).
 
-This is the most reliable demo architecture under time pressure.
+Receive logs/results and store them.
 
-Final list of files (complete, minimal, hackathon-ready)
-Repo root
+State (in-memory for MVP):
 
-README.md — setup, run, demo steps
+workers (connected, capabilities, status)
 
-.gitignore
+job_queue (FIFO)
 
-docker-compose.dev.yml — optional: starts coordinator + web (provider runs separately)
+jobs (status, assigned worker, timestamps, results)
 
-.env.example — top-level env pointers (optional)
+Optional persistence (still simple): SQLite file for jobs table (not required).
 
-1) Coordinator (VM backend)
+Worker Agent (Student laptop; one per device)
 
-Path: apps/coordinator/
+Service: gridx-worker
 
-Core
+Responsibilities:
 
-apps/coordinator/package.json
+Connect to coordinator via WebSocket.
 
-apps/coordinator/tsconfig.json
+Advertise capabilities (CPU cores, GPU yes/no).
 
-apps/coordinator/.env.example
+Receive assigned job.
 
-apps/coordinator/src/index.ts — boot HTTP + WS servers
+Run the job inside a Docker container with strict sandbox flags.
 
-apps/coordinator/src/config.ts — env parsing (PORT, DATA_DIR, DB_PATH, CORS, etc.)
+Stream logs to coordinator and return result (exit code + stdout/stderr + artifact metadata).
 
-WebSocket gateway
+Worker local dependencies:
 
-apps/coordinator/src/ws/server.ts — WS server init, connection lifecycle
+Docker Engine installed (and NVIDIA container runtime if GPU jobs are demoed).
 
-apps/coordinator/src/ws/router.ts — routes by message type
+Job Runner Image(s) (Docker)
 
-apps/coordinator/src/ws/auth.ts — simple token/auth for provider/requester
+Images: gridx-job-python, optionally gridx-job-gpu later
 
-apps/coordinator/src/ws/rooms.ts — job rooms + provider rooms
+Responsibilities:
 
-apps/coordinator/src/ws/types.ts — WS message types (runtime validation)
+Provide a controlled runtime to execute a whitelisted job type.
 
-HTTP APIs (artifacts + health)
+Read job payload from a mounted/created temp file.
 
-apps/coordinator/src/http/app.ts — express app setup (CORS, JSON, limits)
+Write outputs to a temp output directory (which is later collected by worker).
 
-apps/coordinator/src/http/routes/health.ts — GET /health
+Network & communication
 
-apps/coordinator/src/http/routes/artifacts.ts — POST /artifacts/upload, GET /artifacts/:id
+Topology: all devices on same LAN
 
-apps/coordinator/src/http/routes/jobs.ts — GET /jobs/:id, GET /jobs (for UI)
+Protocols:
+
+Worker ↔ Coordinator: WebSocket (primary control plane)
+
+Client ↔ Coordinator: HTTP (simplest) for submit job, list jobs, get result
+(You can also do client submit over WS; HTTP is simpler for demo tooling.)
+
+Ports (example)
+
+gridx-coordinator
+
+8080/tcp WebSocket: /ws/worker
+
+8081/tcp HTTP API: /jobs, /jobs/:id, /workers
+
+gridx-worker
+
+no inbound ports required (outbound WS to coordinator)
+
+Coordinator services (internal modules)
+
+WS Gateway
+
+Auth: shared demo token (header or first message)
+
+Tracks heartbeats (ping/pong), last_seen timestamps.
 
 Scheduler
 
-apps/coordinator/src/scheduler/matcher.ts — choose provider for queued jobs
+FIFO queue
 
-apps/coordinator/src/scheduler/queue.ts — enqueue, dequeue, requeue on failure
+Dispatch rule:
 
-apps/coordinator/src/scheduler/timeouts.ts — ACK timeout, heartbeat timeout
+If job.requires_gpu == true, pick first idle worker with caps.gpu=true
 
-Storage (SQLite + filesystem)
+Else pick first idle worker
 
-apps/coordinator/src/storage/db.ts — sqlite init + migrations
+Failure handling:
 
-apps/coordinator/src/storage/migrations/001_init.sql — jobs/providers tables
+Worker disconnects while running → mark job failed and requeue (or failed only; your choice).
 
-apps/coordinator/src/storage/jobs.ts — CRUD for jobs
+Job Registry
 
-apps/coordinator/src/storage/providers.ts — CRUD for providers
+Job states: queued → assigned → running → completed|failed|canceled
 
-apps/coordinator/src/storage/artifacts.ts — artifact metadata + file paths
+Stores:
 
-Utilities
+job_id, kind, payload_hash, requires_gpu, resource_limits, assigned_worker
 
-apps/coordinator/src/utils/id.ts — ids (jobId, artifactId)
+stdout/stderr (or last N lines) and artifact list (optional)
 
-apps/coordinator/src/utils/validate.ts — schema validation helpers
+Worker job execution (Docker-based)
+Job lifecycle on worker
 
-apps/coordinator/src/utils/logger.ts — structured logs
+Receive {job_id, kind, payload, limits} from coordinator.
 
-Runtime data dirs
+Validate kind is whitelisted (e.g., python only).
 
-apps/coordinator/data/.gitkeep — local dev placeholder
+Materialize payload into a temp working dir on worker:
 
-apps/coordinator/data/artifacts/.gitkeep
+/var/lib/gridx/jobs/<job_id>/input/
 
-apps/coordinator/data/sqlite/.gitkeep
+/var/lib/gridx/jobs/<job_id>/output/
 
-2) Provider Agent (runs on provider VM; executes Docker sandbox)
+Run docker container with:
 
-Path: nodes/provider/
+No host file access except that job’s temp dir
 
-Core
+Hard resource limits
 
-nodes/provider/pyproject.toml — dependencies (websockets, requests, psutil, docker)
+Non-root user
 
-nodes/provider/.env.example — COORDINATOR_URL, PROVIDER_TOKEN, PROVIDER_ID, WORK_DIR
+Read-only filesystem
 
-nodes/provider/provider/main.py — entrypoint; connect WS, heartbeat loop, job loop
+No network (recommended for demo)
 
-nodes/provider/provider/config.py — env parsing + defaults
+Docker run contract
 
-nodes/provider/provider/ws_client.py — WS connect/reconnect, send/receive, routing
+Mounted paths:
 
-nodes/provider/provider/protocol.py — message types/constants (must match shared spec)
+/work/input (read-only)
 
-Job execution
+/work/output (read-write)
 
-nodes/provider/provider/job_runner.py — orchestrates a job lifecycle
+Entrypoint in image reads /work/input/task.json and executes.
 
-nodes/provider/provider/docker_runner.py — hardened Docker run + log streaming
+Recommended sandbox flags (MVP “final”)
 
-nodes/provider/provider/sandbox_policy.py — the enforced security policy (caps drop, ro fs, net none, limits)
+--read-only
 
-nodes/provider/provider/artifacts.py — download input from coordinator, upload output via HTTP
+--cap-drop=ALL
 
-nodes/provider/provider/metering.py — basic stats (runtime, exit code, cpu/mem if available)
+--security-opt=no-new-privileges:true
 
-Provider controls
+--pids-limit=256
 
-nodes/provider/provider/idle.py — optional “only when idle” (psutil CPU threshold)
+--cpus=<job.limit.cpus>
 
-nodes/provider/provider/state.py — available/busy/paused, current job
+--memory=<job.limit.memory>
 
-Install/run scripts
+--network=none
 
-nodes/provider/scripts/install_ubuntu.sh — install docker + python deps
+--user 1000:1000
 
-nodes/provider/scripts/run_provider.sh — exports env and runs provider
+--tmpfs /tmp:rw,size=256m
 
-3) Requester Web UI (submits and watches jobs)
+-v <jobdir>/input:/work/input:ro
 
-Path: apps/web/
+-v <jobdir>/output:/work/output:rw
 
-Core
+If GPU demo is needed later:
 
-apps/web/package.json
+add --gpus all and ensure NVIDIA container runtime.
 
-apps/web/next.config.js
+Job types (keep minimal and safe)
 
-apps/web/.env.example — NEXT_PUBLIC_COORDINATOR_HTTP, NEXT_PUBLIC_COORDINATOR_WS
+For MVP, define one job type:
 
-apps/web/app/page.tsx — dashboard (providers + recent jobs)
+kind = "python"
 
-apps/web/app/submit/page.tsx — submit job
+payload contains:
 
-apps/web/app/jobs/[id]/page.tsx — logs/status/output download
+main_py (base64 string) OR script_text
 
-UI components
+optional args
 
-apps/web/components/JobForm.tsx
+runner does:
 
-apps/web/components/LogViewer.tsx
+write script to /tmp/main.py
 
-apps/web/components/JobStatusBadge.tsx
+execute python /tmp/main.py
 
-apps/web/components/ProviderTable.tsx
+capture stdout/stderr
 
-Client libs
+optionally write outputs into /work/output
 
-apps/web/lib/api.ts — HTTP calls (submit job, list jobs, download output)
+Do not accept arbitrary shell commands in MVP.
 
-apps/web/lib/ws.ts — WS connect, subscribe to job room, events
+Message contracts (final)
+Worker → Coordinator (WS)
 
-apps/web/lib/types.ts — TS types matching shared protocol
+hello: {type:"hello", worker_id, caps:{cpu_cores,gpu}, token}
 
-4) Shared protocol (single source of truth)
+heartbeat: {type:"hb", worker_id, ts}
 
-Path: shared/protocol/
+job_started: {type:"job_started", job_id, worker_id}
 
-shared/protocol/message_types.md — human-readable spec of WS/HTTP messages
+job_log: {type:"job_log", job_id, line}
 
-shared/protocol/job.schema.json — job spec schema (MVP)
+job_result: {type:"job_result", job_id, exit_code, stdout, stderr, artifacts:[{name,size,sha256}]}
 
-shared/protocol/ws.schema.json — WS message envelope + event schemas
+Coordinator → Worker (WS)
 
-(Provider + Coordinator must match these.)
+assign_job: {type:"assign_job", job:{job_id, kind, payload, limits}}
 
-5) Docs for judges (recommended, minimal)
+cancel_job: {type:"cancel_job", job_id}
 
-Path: shared/docs/
+Client → Coordinator (HTTP)
 
-shared/docs/threat_model.md — “no host mounts, non-root, ro fs, net none, limits”
+POST /jobs → returns job_id
 
-shared/docs/demo_script.md — step-by-step demo runbook
+GET /jobs/:id → status + result if done
 
-Minimum WS message types you will implement (MVP)
+GET /workers → list connected workers + status
 
-provider.hello, provider.heartbeat
+Deployment (Docker Compose)
+Coordinator machine
 
-requester.hello
+docker compose up coordinator
 
-job.submit, job.submitted
+Exposes 8080/8081 on LAN.
 
-job.assign, job.ack
+Worker machines
 
-job.status
+Either run worker as:
 
-job.log
+a small binary/script directly on host (simplest), OR
 
-job.complete, job.failed
+a container with access to docker socket (still common for demos):
 
-Artifacts via HTTP:
+mount /var/run/docker.sock:/var/run/docker.sock
 
-POST /artifacts/upload (provider uploads output zip)
+NOTE: this gives the worker container control over host docker (acceptable for MVP, but mention in “known limitations”).
 
-GET /artifacts/:id (requester downloads)
+Trust boundaries & MVP security stance
 
-If you implement exactly the file list above, you have everything needed for:
+Host private files protection: achieved by never mounting host directories into job containers; only mount per-job temp dir created by worker.
 
-WS-based coordinator + clients
+Network isolation: --network=none prevents jobs from scanning LAN.
 
-Docker sandbox execution on provider VMs
+Privilege isolation: drop caps + non-root + no-new-privileges.
 
-Live logs + output download
+Known limitation (explicit): Docker is not a perfect VM boundary; for a stronger story, run the worker agent inside a VM on each provider device.
 
-Reliable hackathon demo without P2P complexity
+Data flow summary
+
+Worker connects to coordinator (WS) → registers caps.
+
+Client submits job to coordinator (HTTP).
+
+Coordinator enqueues → scheduler assigns to idle worker.
+
+Worker runs Docker job container with sandbox flags.
+
+Worker streams logs → coordinator.
+
+Worker sends result → coordinator stores and exposes via GET /jobs/:id.
+
+This is the “final backend architecture” for a working LAN prototype with Docker-based sandboxed job execution and WebSocket control plane
