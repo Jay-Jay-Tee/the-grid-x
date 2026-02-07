@@ -43,7 +43,7 @@ from common.constants import (
     HTTP_INTERNAL_ERROR
 )
 
-from database import (
+from coordinator.database import (
     db_get_job,
     db_list_workers,
     get_db,
@@ -51,17 +51,17 @@ from database import (
     db_upsert_worker,
     init_db
 )
-from credit_manager import (
+from coordinator.credit_manager import (
     ensure_user,
     get_balance,
     deduct,
     credit,
     get_job_cost
 )
-from scheduler import job_queue, dispatch
+from coordinator.scheduler import job_queue, dispatch
 
 # Import so WS server runs
-from websocket import run_ws
+from coordinator.websocket import run_ws
 
 # Configure logging
 logging.basicConfig(

@@ -210,7 +210,13 @@ class HybridWorker:
         docker_manager = DockerManager(docker_socket=docker_socket)
         task_queue = TaskQueue()
         executor = TaskExecutor(docker_manager, task_queue)
-        asyncio.create_task(executor.start_executor())
+        
+        # Only start executor if Docker is available
+        if docker_manager.available:
+            asyncio.create_task(executor.start_executor())
+        else:
+            print(f"⚠️  Docker is not available. Worker will connect but cannot execute tasks.")
+            print(f"   To enable task execution, start Docker Desktop (Windows/Mac) or Docker daemon (Linux).")
         
         # Get system capabilities
         monitor = ResourceMonitor()
@@ -226,6 +232,7 @@ class HybridWorker:
         print(f"   Worker ID: {worker_id[:16]}...")
         print(f"   Owner: {self.user_id}")
         print(f"   Capabilities: {caps['cpu_cores']} CPU cores, GPU: {caps['gpu']}")
+        print(f"   Docker: {'✅ Available' if docker_manager.available else '❌ Not available'}")
         print()
         
         # Worker connection loop

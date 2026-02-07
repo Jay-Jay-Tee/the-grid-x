@@ -39,7 +39,21 @@ class DockerManager:
         Args:
             docker_socket: Docker socket path (default: /var/run/docker.sock or from env)
         """
-        self.client = docker.from_env() if not docker_socket else docker.DockerClient(base_url=docker_socket)
+        self.client = None
+        self.available = False
+        
+        try:
+            self.client = docker.from_env() if not docker_socket else docker.DockerClient(base_url=docker_socket)
+            # Test connection by getting server version
+            self.client.version()
+            self.available = True
+        except Exception as e:
+            # Docker is not available, but worker can still connect to coordinator
+            import logging
+            logging.warning(f"Docker not available: {e}. Worker will connect but cannot execute tasks.")
+            self.client = None
+            self.available = False
+        
         self.containers: Dict[str, docker.models.containers.Container] = {}
         self._workspace_dir = "/tmp/grid-x-workspace"
         
@@ -117,6 +131,9 @@ class DockerManager:
         Returns:
             Container ID
         """
+        if not self.available:
+            raise RuntimeError("Docker is not available. Ensure Docker Desktop is running on Windows or Docker daemon is running on Linux/Mac.")
+        
         container_id = container_id or str(uuid.uuid4())
         
         try:

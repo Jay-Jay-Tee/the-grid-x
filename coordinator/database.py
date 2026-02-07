@@ -129,6 +129,15 @@ def init_db() -> None:
         )
     """)
     
+    # User authentication table (used for worker owners)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_auth (
+            user_id TEXT PRIMARY KEY,
+            auth_token TEXT,
+            created_at REAL
+        )
+    """)
+    
     # Indices for performance
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
@@ -364,4 +373,148 @@ def db_complete_job(
             
     except Exception as e:
         logger.error(f"Failed to complete job: {e}")
+        return False
+
+# ============================================================================
+# BACKWARDS-COMPATIBILITY WRAPPERS
+# ============================================================================
+
+
+def db_set_job_assigned(job_id: str, worker_id: str) -> bool:
+    """Compatibility wrapper for older API name.
+    Atomically assigns a job to a worker.
+    """
+    try:
+        if not validate_uuid(job_id) or not validate_uuid(worker_id):
+            logger.warning("Invalid job_id or worker_id in db_set_job_assigned")
+            return False
+        return db_assign_job_to_worker(job_id, worker_id)
+    except Exception as e:
+        logger.error(f"db_set_job_assigned failed: {e}")
+        return False
+
+
+def db_set_job_running(job_id: str) -> None:
+    """Mark job as running (compat wrapper)."""
+    try:
+        if not validate_uuid(job_id):
+            logger.warning("Invalid job_id in db_set_job_running")
+            return
+        db_update_job_status(job_id, "running", started_at=now())
+    except Exception as e:
+        logger.error(f"db_set_job_running failed: {e}")
+
+
+def db_set_job_completed(job_id: str, stdout: str, stderr: str, exit_code: int) -> bool:
+    """Compatibility wrapper to complete a job using available APIs.
+
+    If worker_id is recorded for the job, uses the atomic completion routine,
+    otherwise updates the job row directly.
+    """
+    try:
+        if not validate_uuid(job_id):
+            logger.warning("Invalid job_id in db_set_job_completed")
+            return False
+
+        row = get_db().execute("SELECT worker_id FROM jobs WHERE id=?", (job_id,)).fetchone()
+        worker_id = row["worker_id"] if row else None
+
+        if worker_id and validate_uuid(worker_id):
+            return db_complete_job(job_id, worker_id, stdout, stderr, exit_code)
+
+        # Fallback: update job row only
+        status = "completed" if exit_code == 0 else "failed"
+        conn = get_db()
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status=?, completed_at=?, stdout=?, stderr=?, exit_code=?
+            WHERE id=?
+            """,
+            (status, now(), stdout, stderr, exit_code, job_id),
+        )
+        conn.commit()
+        logger.info(f"Job {job_id} marked {status} (fallback)")
+        return True
+    except Exception as e:
+        logger.error(f"db_set_job_completed failed: {e}")
+        return False
+
+
+def db_set_worker_status(worker_id: str, status: str) -> None:
+    """Set worker status (compat wrapper)."""
+    try:
+        if not validate_uuid(worker_id):
+            logger.warning("Invalid worker_id in db_set_worker_status")
+            return
+        conn = get_db()
+        conn.execute("UPDATE workers SET status=? WHERE id=?", (status, worker_id))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"db_set_worker_status failed: {e}")
+
+
+def db_init() -> None:
+    """Compatibility alias for init_db."""
+    try:
+        init_db()
+    except Exception as e:
+        logger.error(f"db_init failed: {e}")
+
+
+def db_set_worker_offline(worker_id: str) -> None:
+    """Mark a worker offline (compat wrapper)."""
+    try:
+        if not validate_uuid(worker_id):
+            logger.warning("Invalid worker_id in db_set_worker_offline")
+            return
+        conn = get_db()
+        conn.execute("UPDATE workers SET status=? WHERE id=?", ("offline", worker_id))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"db_set_worker_offline failed: {e}")
+
+
+def db_get_worker_by_auth(owner_id: str, auth_token: str) -> Optional[Dict[str, Any]]:
+    """Return a worker row for given owner credentials, if any."""
+    try:
+        if not owner_id:
+            return None
+        row = get_db().execute(
+            "SELECT * FROM workers WHERE owner_id=? AND auth_token=?",
+            (owner_id, auth_token),
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"db_get_worker_by_auth failed: {e}")
+        return None
+
+
+def db_verify_worker_auth(worker_id: str, auth_token: str) -> bool:
+    """Verify that a worker id matches the provided auth token."""
+    try:
+        if not validate_uuid(worker_id):
+            return False
+        row = get_db().execute(
+            "SELECT auth_token FROM workers WHERE id=?",
+            (worker_id,),
+        ).fetchone()
+        return bool(row and row["auth_token"] == auth_token)
+    except Exception as e:
+        logger.error(f"db_verify_worker_auth failed: {e}")
+        return False
+
+
+def db_verify_user_auth(user_id: str, auth_token: str) -> bool:
+    """Verify user credentials against `user_auth` table."""
+    try:
+        if not user_id:
+            return False
+        row = get_db().execute(
+            "SELECT auth_token FROM user_auth WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        return bool(row and row["auth_token"] == auth_token)
+    except Exception as e:
+        logger.error(f"db_verify_user_auth failed: {e}")
         return False

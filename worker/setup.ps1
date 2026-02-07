@@ -94,9 +94,11 @@ else {
 Write-Host ""
 Write-Host "Setup complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "To start the worker, use one of these commands:"
-Write-Host "  python -m worker.main --user alice"
-Write-Host "  python -m worker.main --user alice --coordinator-ip localhost --http-port 8081 --ws-port 8080"
+Write-Host "To start the worker, use one of these commands:" -ForegroundColor Cyan
+Write-Host "  python -m worker.main --user alice --password yourpassword" -ForegroundColor White
+Write-Host ""
+Write-Host "  (With custom coordinator settings:)" -ForegroundColor Cyan
+Write-Host "  python -m worker.main --user alice --password yourpassword --coordinator-ip localhost --http-port 8081 --ws-port 8080" -ForegroundColor White
 Write-Host ""
 
 Pop-Location
