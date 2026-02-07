@@ -14,7 +14,7 @@ from websockets.server import WebSocketServerProtocol
 from .database import (
     db_init, db_set_worker_offline, db_set_worker_status, 
     db_upsert_worker, db_get_worker_by_auth, db_verify_worker_auth, 
-    db_verify_user_auth, now
+    db_verify_user_auth, now, get_db
 )
 from .workers import lock, register_worker_ws, unregister_worker_ws, update_worker_last_seen
 from .scheduler import dispatch, job_queue, on_job_started, on_job_result
@@ -138,6 +138,33 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
             async with lock:
                 unregister_worker_ws(worker_id)
             db_set_worker_offline(worker_id)
+
+            # Requeue any jobs that were marked running on this worker
+            try:
+                conn = get_db()
+                rows = conn.execute(
+                    "SELECT id FROM jobs WHERE status=? AND worker_id=?",
+                    ("running", worker_id),
+                ).fetchall()
+
+                for r in rows:
+                    job_id = r["id"]
+                    conn.execute(
+                        "UPDATE jobs SET status=?, worker_id=? WHERE id=?",
+                        ("queued", None, job_id),
+                    )
+                    conn.commit()
+                    # Put back on in-memory queue for dispatch
+                    try:
+                        await job_queue.put(job_id)
+                    except Exception:
+                        pass
+
+                if rows:
+                    print(f"⚠️  Requeued {len(rows)} job(s) from disconnected worker {worker_id[:12]}...")
+            except Exception as e:
+                print(f"⚠️  Error requeuing jobs from {worker_id[:12]}: {e}")
+
             print(f"✗ Worker {worker_id[:12]}... disconnected")
 
 
