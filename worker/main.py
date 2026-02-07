@@ -193,55 +193,56 @@ class HybridWorker:
     
     async def run_worker(self):
         """Run the worker loop - connects to coordinator and executes jobs."""
-        worker_id = self.identity.get_worker_id()
-        auth_token = self.identity.get_auth_token()
-        
-        # Docker setup
-        def _docker_socket() -> Optional[str]:
-            if os.getenv("GRIDX_DOCKER_SOCKET"):
-                return os.getenv("GRIDX_DOCKER_SOCKET")
-            if os.getenv("DOCKER_HOST"):
-                return os.getenv("DOCKER_HOST")
-            if os.name == "nt":
-                return "npipe:////./pipe/docker_engine"
-            return None
-        
-        docker_socket = _docker_socket()
-        docker_manager = DockerManager(docker_socket=docker_socket)
-        task_queue = TaskQueue()
-        executor = TaskExecutor(docker_manager, task_queue)
-        
-        # Only start executor if Docker is available
-        if docker_manager.available:
-            asyncio.create_task(executor.start_executor())
-        else:
-            print(f"⚠️  Docker is not available. Worker will connect but cannot execute tasks.")
-            print(f"   To enable task execution, start Docker Desktop (Windows/Mac) or Docker daemon (Linux).")
-        
-        # Get system capabilities
-        monitor = ResourceMonitor()
-        caps = {
-            "cpu_cores": monitor.get_cpu_metrics().get("cores", os.cpu_count() or 0),
-            "gpu": False
-        }
-        gpu = monitor.get_gpu_metrics()
-        if gpu and gpu.get("count", 0) > 0:
-            caps["gpu"] = True
-        # Indicate whether this worker can actually execute tasks (Docker available)
-        caps["can_execute"] = docker_manager.available
-        
-        print(f"👷 Starting worker process...")
-        print(f"   Worker ID: {worker_id[:16]}...")
-        print(f"   Owner: {self.user_id}")
-        print(f"   Capabilities: {caps['cpu_cores']} CPU cores, GPU: {caps['gpu']}")
-        print(f"   Docker: {'✅ Available' if docker_manager.available else '❌ Not available'}")
-        print()
-        
-        # Worker connection loop
-        reconnect_delay = 5
-        max_reconnect_delay = 60
-        
-        while True:
+        try:
+            worker_id = self.identity.get_worker_id()
+            auth_token = self.identity.get_auth_token()
+            
+            # Docker setup
+            def _docker_socket() -> Optional[str]:
+                if os.getenv("GRIDX_DOCKER_SOCKET"):
+                    return os.getenv("GRIDX_DOCKER_SOCKET")
+                if os.getenv("DOCKER_HOST"):
+                    return os.getenv("DOCKER_HOST")
+                if os.name == "nt":
+                    return "npipe:////./pipe/docker_engine"
+                return None
+            
+            docker_socket = _docker_socket()
+            docker_manager = DockerManager(docker_socket=docker_socket)
+            task_queue = TaskQueue()
+            executor = TaskExecutor(docker_manager, task_queue)
+            
+            # Only start executor if Docker is available
+            if docker_manager.available:
+                asyncio.create_task(executor.start_executor())
+            else:
+                print(f"⚠️  Docker is not available. Worker will connect but cannot execute tasks.")
+                print(f"   To enable task execution, start Docker Desktop (Windows/Mac) or Docker daemon (Linux).")
+            
+            # Get system capabilities
+            monitor = ResourceMonitor()
+            caps = {
+                "cpu_cores": monitor.get_cpu_metrics().get("cores", os.cpu_count() or 0),
+                "gpu": False
+            }
+            gpu = monitor.get_gpu_metrics()
+            if gpu and gpu.get("count", 0) > 0:
+                caps["gpu"] = True
+            # Indicate whether this worker can actually execute tasks (Docker available)
+            caps["can_execute"] = docker_manager.available
+            
+            print(f"👷 Starting worker process...")
+            print(f"   Worker ID: {worker_id[:16]}...")
+            print(f"   Owner: {self.user_id}")
+            print(f"   Capabilities: {caps['cpu_cores']} CPU cores, GPU: {caps['gpu']}")
+            print(f"   Docker: {'✅ Available' if docker_manager.available else '❌ Not available'}")
+            print()
+            
+            # Worker connection loop
+            reconnect_delay = 5
+            max_reconnect_delay = 60
+            
+            while True:
             try:
                 # Check if coordinator is reachable before connecting
                 if not self._check_coordinator_connection():
@@ -408,6 +409,14 @@ class HybridWorker:
                 print(f"❌ Worker error: {e}. Reconnecting...")
                 self.activity_log.add_entry("Error", str(e)[:50])
                 await asyncio.sleep(reconnect_delay)
+        
+        except Exception as e:
+            print(f"\n❌ FATAL ERROR IN WORKER PROCESS:")
+            print(f"{type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            self.is_connected = False
+            self.activity_log.add_entry("Fatal Error", f"{type(e).__name__}: {str(e)[:50]}")
     
     # Client functionality methods
     def submit_job(self, code: str, wait_for_result: bool = True) -> Optional[str]:
