@@ -99,8 +99,10 @@
       transition: all 0.15s ease;
     }
     button:hover { border-color: var(--accent); color: var(--accent); }
-    .disconnect { color: var(--error); border-color: rgba(255,107,107,0.4); }
-    .disconnect:hover { color: #fff; background: rgba(255,107,107,0.18); border-color: var(--error); }
+.disconnect { color: var(--error); border-color: rgba(255,107,107,0.4); }
+.disconnect:hover { color: #fff; background: rgba(255,107,107,0.18); border-color: var(--error); }
+.broadcast-btn { color: var(--accent); border-color: rgba(110,243,165,0.5); }
+.broadcast-btn:hover { color: #fff; background: rgba(110,243,165,0.15); border-color: var(--accent); }
     .subtitle { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
     .flex { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     .mono { font-family: 'JetBrains Mono', monospace; }
@@ -150,6 +152,19 @@
     <section>
       <h3 class="section-title">Recent Jobs</h3>
       <div class="card" id="recent-jobs"></div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Broadcast to All Nodes</h3>
+      <div class="card flex" style="flex-wrap: wrap; gap: 10px; align-items: flex-end;">
+        <div style="flex: 1; min-width: 200px;">
+          <label for="broadcast-msg" style="display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px;">Message</label>
+          <input type="text" id="broadcast-msg" placeholder="Enter message to broadcast to all nodes..."
+            style="width: 100%; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text); font-family: var(--font); font-size: 14px;" />
+        </div>
+        <button type="button" id="broadcast-btn" class="broadcast-btn">Broadcast</button>
+      </div>
     </section>
 
     <section>
@@ -205,6 +220,34 @@
         alert('Failed to disconnect: ' + err);
       }
     };
+
+    const broadcastMessage = async () => {
+      const input = document.getElementById('broadcast-msg');
+      const msg = (input?.value || '').trim();
+      if (!msg) {
+        alert('Please enter a message to broadcast.');
+        return;
+      }
+      const btn = document.getElementById('broadcast-btn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/admin/broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || await res.text());
+        if (input) input.value = '';
+        alert(`Broadcast sent to ${data.workers_notified ?? 0} node(s).`);
+      } catch (err) {
+        alert('Failed to broadcast: ' + err);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    };
+
+    document.getElementById('broadcast-btn')?.addEventListener('click', broadcastMessage);
 
     const loadData = async () => {
       try {

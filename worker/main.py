@@ -20,7 +20,7 @@ import sys
 import uuid
 import hashlib
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 import argparse
 import time
 
@@ -180,6 +180,12 @@ class HybridWorker:
         # Pause/resume for UI control (when True, worker disconnects and does not reconnect)
         self._paused = False
 
+        # Callback for coordinated messages (terminated, broadcast) - (msg_type, message) -> None
+        self._message_callback: Optional[Callable[[str, str], None]] = None
+
+        # Set when admin terminates - prevents reconnection
+        self._terminated = False
+
         print(f"\n🚀 Grid-X Hybrid Worker-Client")
         print(f"   User: {user_id}")
         print(f"   Coordinator HTTP: {self.coordinator_http}")
@@ -203,6 +209,10 @@ class HybridWorker:
         """Resume accepting jobs - worker will reconnect to coordinator."""
         self._paused = False
         self.activity_log.add_entry("Resumed", "Worker resumed by user")
+
+    def set_message_callback(self, callback: Optional[Callable[[str, str], None]]) -> None:
+        """Set callback for terminated/broadcast messages: (msg_type, message) -> None."""
+        self._message_callback = callback
 
     def is_paused(self) -> bool:
         """Return whether worker is currently paused."""
@@ -267,6 +277,9 @@ class HybridWorker:
             
             while True:
                 try:
+                    # When terminated by admin, exit worker loop
+                    if self._terminated:
+                        return
                     # When paused, disconnect (by not connecting) and wait
                     if self._paused:
                         self.is_connected = False
@@ -396,6 +409,25 @@ class HybridWorker:
 
                                     await handle_assign_job(msg, ws, executor, task_queue)
                                     self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
+
+                                elif t == "terminated":
+                                    msg_text = msg.get("message", "Your node was terminated by the admin.")
+                                    self.activity_log.add_entry("Terminated", msg_text)
+                                    self._terminated = True
+                                    if self._message_callback:
+                                        try:
+                                            self._message_callback("terminated", msg_text)
+                                        except Exception:
+                                            pass
+                                    break
+
+                                elif t == "broadcast":
+                                    msg_text = msg.get("message", "")
+                                    if msg_text and self._message_callback:
+                                        try:
+                                            self._message_callback("broadcast", msg_text)
+                                        except Exception:
+                                            pass
 
                                 # Check if paused (watcher will close ws, this is redundant but explicit)
                                 if self._paused:

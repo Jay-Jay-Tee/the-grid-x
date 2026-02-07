@@ -8,6 +8,7 @@ while still allowing the coordinator device to act as a fallback.
 """
 
 import asyncio
+import json
 import os
 from typing import Any, Dict, Optional
 
@@ -120,7 +121,10 @@ def get_worker_ws(worker_id: str) -> Optional[Any]:
 
 
 async def disconnect_worker(worker_id: str) -> bool:
-    """Force-disconnect a worker websocket and mark it offline."""
+    """Force-disconnect a worker websocket and mark it offline.
+    Sends a 'terminated' message to the worker first so the client app
+    can show a popup before the connection closes.
+    """
     try:
         async with lock:
             entry = workers_ws.get(worker_id)
@@ -129,8 +133,15 @@ async def disconnect_worker(worker_id: str) -> bool:
             if not entry:
                 return False
 
-            # Attempt graceful close
+            # Send terminated message first so client can show popup
             if ws:
+                try:
+                    await ws.send(json.dumps({
+                        "type": "terminated",
+                        "message": "Your node was terminated by the admin.",
+                    }))
+                except Exception:
+                    pass
                 try:
                     await ws.close(code=4400, reason="Disconnected by admin")
                 except Exception:
@@ -146,3 +157,21 @@ async def disconnect_worker(worker_id: str) -> bool:
         return True
     except Exception:
         return False
+
+
+async def broadcast_to_all_workers(message: str) -> int:
+    """Broadcast a message to all connected workers. Returns count of workers notified."""
+    count = 0
+    async with lock:
+        for worker_id, entry in list(workers_ws.items()):
+            ws = entry.get("ws")
+            if ws:
+                try:
+                    await ws.send(json.dumps({
+                        "type": "broadcast",
+                        "message": message,
+                    }))
+                    count += 1
+                except Exception:
+                    pass
+    return count

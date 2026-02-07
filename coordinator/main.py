@@ -64,7 +64,7 @@ from coordinator.credit_manager import (
     get_max_reserve,
 )
 from coordinator.scheduler import job_queue, dispatch, watchdog_loop
-from coordinator.workers import workers_ws, disconnect_worker
+from coordinator.workers import workers_ws, disconnect_worker, broadcast_to_all_workers
 
 # Import so WS server runs
 from coordinator.websocket import run_ws
@@ -506,6 +506,21 @@ async def admin_disconnect_worker(worker_id: str) -> Dict[str, Any]:
         raise HTTPException(HTTP_NOT_FOUND, "Worker not connected or already offline")
 
     return {"success": True, "worker_id": worker_id}
+
+
+@app.post("/admin/broadcast")
+async def admin_broadcast(request: Request) -> Dict[str, Any]:
+    """Broadcast a message to all connected worker nodes."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(HTTP_BAD_REQUEST, "Invalid JSON body")
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(HTTP_BAD_REQUEST, "Message cannot be empty")
+    message = sanitize_string(message, max_length=2000)
+    count = await broadcast_to_all_workers(message)
+    return {"success": True, "workers_notified": count}
 
 
 @app.get("/admin")

@@ -70,6 +70,8 @@ class DashboardFrame(ctk.CTkFrame):
         self._build_ui()
         self._start_refresh()
         self._start_animations()
+        # Register callback for terminated/broadcast messages from coordinator
+        self.worker.set_message_callback(self._on_worker_message)
         # Initial workers fetch after short delay
         self.after(1500, self._update_workers)
 
@@ -780,6 +782,45 @@ class DashboardFrame(ctk.CTkFrame):
         except:
             pass
         self.after(ANIM_PULSE_SLOW, self._animate_idle_glow)
+
+    def _on_worker_message(self, msg_type: str, message: str):
+        """Called from worker thread on terminated/broadcast - schedule popup on main thread."""
+        self.after(0, lambda: self._show_message_popup(msg_type, message))
+
+    def _show_message_popup(self, msg_type: str, message: str):
+        """Show a modal popup with the message. For terminated, quit app when OK is clicked."""
+        from .theme import BG_PANEL, BG_DARK, GREEN, GREEN_DIM
+        popup = ctk.CTkToplevel(self)
+        popup.title("Grid-X" if msg_type == "broadcast" else "Node Terminated")
+        popup.geometry("420x160")
+        popup.configure(fg_color=BG_DARK)
+        popup.resizable(False, False)
+        popup.transient(self.winfo_toplevel())
+        popup.grab_set()
+
+        frame = ctk.CTkFrame(popup, fg_color=BG_PANEL, corner_radius=0, border_width=1, border_color=GREEN_DIM)
+        frame.pack(fill="both", expand=True, padx=12, pady=12)
+
+        lbl = ctk.CTkLabel(
+            frame, text=message, wraplength=380, justify="left",
+            font=ctk.CTkFont(family="Consolas", size=13),
+            text_color=GREEN, fg_color="transparent",
+        )
+        lbl.pack(padx=16, pady=(16, 12), fill="x")
+
+        def _on_ok():
+            popup.grab_release()
+            popup.destroy()
+            if msg_type == "terminated":
+                self._on_quit()
+
+        ok_btn = ctk.CTkButton(
+            frame, text="OK", width=80, height=32,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            fg_color=BG_DARK, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
+            command=_on_ok,
+        )
+        ok_btn.pack(pady=(0, 16))
 
     def _on_quit(self):
         """Gracefully shutdown worker and close app."""
