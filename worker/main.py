@@ -499,7 +499,17 @@ class HybridWorker:
             self.activity_log.add_entry("Job Submitted", f"ID: {job_id[:8]}...")
             
             if wait_for_result:
-                self._wait_for_job(job_id)
+                # If we're running inside an asyncio event loop (interactive CLI),
+                # run the blocking polling in a background thread so we don't
+                # block the loop and prevent the websocket from receiving
+                # assigned jobs. If no loop is running, perform blocking wait.
+                try:
+                    loop = asyncio.get_running_loop()
+                    # schedule polling in a thread to avoid blocking the loop
+                    loop.create_task(asyncio.to_thread(self._wait_for_job, job_id))
+                except RuntimeError:
+                    # no running loop: safe to block
+                    self._wait_for_job(job_id)
             
             return job_id
             
