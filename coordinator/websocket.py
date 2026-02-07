@@ -41,96 +41,96 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                 t = msg.get("type")
 
                 if t == "hello":
-                incoming_worker_id = msg.get("worker_id") or str(uuid.uuid4())
-                caps = msg.get("caps", {"cpu_cores": 0, "gpu": False})
-                owner_id = msg.get("owner_id") or ""
-                auth_token = msg.get("auth_token", "")
+                    incoming_worker_id = msg.get("worker_id") or str(uuid.uuid4())
+                    caps = msg.get("caps", {"cpu_cores": 0, "gpu": False})
+                    owner_id = msg.get("owner_id") or ""
+                    auth_token = msg.get("auth_token", "")
 
-                # FIXED AUTHENTICATION LOGIC
-                if auth_token and owner_id:
-                    # Check if user already has credentials registered
-                    user_exists = db_verify_user_auth(owner_id, auth_token)
-                    
-                    if user_exists:
-                        # User exists and password is correct
-                        # Check if they have an existing worker
-                        existing_worker = db_get_worker_by_auth(owner_id, auth_token)
+                    # FIXED AUTHENTICATION LOGIC
+                    if auth_token and owner_id:
+                        # Check if user already has credentials registered
+                        user_exists = db_verify_user_auth(owner_id, auth_token)
                         
-                        if existing_worker:
-                            # Reconnecting with existing worker
-                            worker_id = existing_worker['id']
-                            print(f"✓ Worker {worker_id[:12]}... authenticated (owner: {owner_id})")
+                        if user_exists:
+                            # User exists and password is correct
+                            # Check if they have an existing worker
+                            existing_worker = db_get_worker_by_auth(owner_id, auth_token)
+                            
+                            if existing_worker:
+                                # Reconnecting with existing worker
+                                worker_id = existing_worker['id']
+                                print(f"✓ Worker {worker_id[:12]}... authenticated (owner: {owner_id})")
+                            else:
+                                # User is correct but this is a new worker for them
+                                worker_id = incoming_worker_id
+                                print(f"✓ New worker {worker_id[:12]}... registered (owner: {owner_id})")
                         else:
-                            # User is correct but this is a new worker for them
-                            worker_id = incoming_worker_id
-                            print(f"✓ New worker {worker_id[:12]}... registered (owner: {owner_id})")
+                            # Check if this owner_id exists in the database with different credentials
+                            from .database import get_db
+                            existing_user = get_db().execute(
+                                "SELECT user_id FROM user_auth WHERE user_id=?", (owner_id,)
+                            ).fetchone()
+                            
+                            if existing_user:
+                                # User exists but password is WRONG - REJECT
+                                print(f"❌ Authentication failed for user: {owner_id} (wrong password)")
+                                await ws.send(json.dumps({
+                                    "type": "auth_error",
+                                    "error": "Authentication failed: Invalid password for this username"
+                                }))
+                                await ws.close(code=4401, reason="Authentication failed")
+                                return
+                            else:
+                                # Brand new user - register them
+                                worker_id = incoming_worker_id
+                                print(f"✓ New user {owner_id} registered with worker {worker_id[:12]}...")
                     else:
-                        # Check if this owner_id exists in the database with different credentials
-                        from .database import get_db
-                        existing_user = get_db().execute(
-                            "SELECT user_id FROM user_auth WHERE user_id=?", (owner_id,)
-                        ).fetchone()
-                        
-                        if existing_user:
-                            # User exists but password is WRONG - REJECT
-                            print(f"❌ Authentication failed for user: {owner_id} (wrong password)")
-                            await ws.send(json.dumps({
-                                "type": "auth_error",
-                                "error": "Authentication failed: Invalid password for this username"
-                            }))
-                            await ws.close(code=4401, reason="Authentication failed")
-                            return
-                        else:
-                            # Brand new user - register them
-                            worker_id = incoming_worker_id
-                            print(f"✓ New user {owner_id} registered with worker {worker_id[:12]}...")
-                else:
-                    # No auth token - backward compatibility (insecure)
-                    worker_id = incoming_worker_id
-                    print(f"⚠️  Worker {worker_id[:12]}... connected without authentication")
+                        # No auth token - backward compatibility (insecure)
+                        worker_id = incoming_worker_id
+                        print(f"⚠️  Worker {worker_id[:12]}... connected without authentication")
+
+                    async with lock:
+                        register_worker_ws(worker_id, ws, caps, owner_id)
+
+                    db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
+
+                    await ws.send(json.dumps({"type": "hello_ack", "worker_id": worker_id}))
+                    await dispatch()
+                    continue
+
+                if not worker_id:
+                    continue
 
                 async with lock:
-                    register_worker_ws(worker_id, ws, caps, owner_id)
+                    update_worker_last_seen(worker_id)
+                # Keep DB in sync with in-memory status
+                from .workers import workers_ws
+                wstatus = (workers_ws.get(worker_id) or {}).get("status", "idle")
+                db_set_worker_status(worker_id, wstatus)
 
-                db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
+                if t == "hb":
+                    continue
 
-                await ws.send(json.dumps({"type": "hello_ack", "worker_id": worker_id}))
-                await dispatch()
-                continue
+                if t == "job_started":
+                    job_id = msg.get("job_id")
+                    if job_id:
+                        on_job_started(job_id)
+                    continue
 
-            if not worker_id:
-                continue
+                if t == "job_log":
+                    continue
 
-            async with lock:
-                update_worker_last_seen(worker_id)
-            # Keep DB in sync with in-memory status
-            from .workers import workers_ws
-            wstatus = (workers_ws.get(worker_id) or {}).get("status", "idle")
-            db_set_worker_status(worker_id, wstatus)
+                if t == "job_result":
+                    job_id = msg.get("job_id")
+                    exit_code = int(msg.get("exit_code") or 0)
+                    stdout = msg.get("stdout", "")
+                    stderr = msg.get("stderr", "")
 
-            if t == "hb":
-                continue
+                    if job_id:
+                        on_job_result(job_id, worker_id, exit_code, stdout, stderr)
 
-            if t == "job_started":
-                job_id = msg.get("job_id")
-                if job_id:
-                    on_job_started(job_id)
-                continue
-
-            if t == "job_log":
-                continue
-
-            if t == "job_result":
-                job_id = msg.get("job_id")
-                exit_code = int(msg.get("exit_code") or 0)
-                stdout = msg.get("stdout", "")
-                stderr = msg.get("stderr", "")
-
-                if job_id:
-                    on_job_result(job_id, worker_id, exit_code, stdout, stderr)
-
-                await dispatch()
-                continue
+                    await dispatch()
+                    continue
 
             except Exception as e:
                 print(f"❌ Error handling message from worker {worker_id or 'unknown'}: {e}")
