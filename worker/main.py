@@ -229,10 +229,13 @@ class HybridWorker:
             task_queue = TaskQueue()
             executor = TaskExecutor(docker_manager, task_queue)
             
-            # Only start executor if Docker is available
-            if docker_manager.available:
-                asyncio.create_task(executor.start_executor())
-            else:
+            # Start executor regardless of Docker availability so assigned jobs
+            # are processed by the executor. If Docker is unavailable the
+            # executor will mark tasks failed with a clear error instead of
+            # leaving them queued indefinitely.
+            asyncio.create_task(executor.start_executor())
+
+            if not docker_manager.available:
                 print(f"⚠️  Docker is not available. Worker will connect but cannot execute tasks.")
                 print(f"   To enable task execution, start Docker Desktop (Windows/Mac) or Docker daemon (Linux).")
             
