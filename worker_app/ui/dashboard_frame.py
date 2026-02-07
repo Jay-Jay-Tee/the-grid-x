@@ -47,7 +47,7 @@ class DashboardFrame(ctk.CTkFrame):
         # Title
         title = ctk.CTkLabel(
             self,
-            text=f"Grid-X Worker — {self.worker.user_id}",
+            text=f"Grid-X Worker : {self.worker.user_id}",
             font=ctk.CTkFont(size=20, weight="bold"),
         )
         title.pack(pady=(0, 10))
@@ -87,7 +87,7 @@ class DashboardFrame(ctk.CTkFrame):
         credits_frame = ctk.CTkFrame(self._tab_status, fg_color="transparent")
         credits_frame.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(credits_frame, text="Credits: ", font=ctk.CTkFont(size=14)).pack(side="left")
-        self._credits_label = ctk.CTkLabel(credits_frame, text="—", font=ctk.CTkFont(size=14, weight="bold"))
+        self._credits_label = ctk.CTkLabel(credits_frame, text="NULL", font=ctk.CTkFont(size=14, weight="bold"))
         self._credits_label.pack(side="left")
         self._refresh_credits_btn = ctk.CTkButton(
             credits_frame,
@@ -164,6 +164,16 @@ class DashboardFrame(ctk.CTkFrame):
         self._submit_status = ctk.CTkLabel(self._tab_submit, text="", text_color="gray", wraplength=400)
         self._submit_status.pack(anchor="w", pady=(5, 0))
 
+        # Results output area - shows stdout/stderr of submitted job
+        ctk.CTkLabel(self._tab_submit, text="Results", font=ctk.CTkFont(size=14, weight="bold")).pack(
+            anchor="w", pady=(15, 5)
+        )
+        self._submit_output = ctk.CTkTextbox(
+            self._tab_submit, height=150, state="disabled", wrap="word", font=ctk.CTkFont(family="Consolas", size=12)
+        )
+        self._submit_output.pack(fill="both", expand=True, pady=(0, 10))
+        self._show_submit_output("Submit code to see results here.")
+
     def _get_language_value(self) -> str:
         """Map displayed language name to API value."""
         choice = self._language_var.get()
@@ -216,6 +226,7 @@ class DashboardFrame(ctk.CTkFrame):
 
         self._submit_btn.configure(state="disabled")
         self._submit_status.configure(text="Submitting...", text_color="gray")
+        self._show_submit_output("Waiting...")
 
         def _do_submit():
             try:
@@ -224,22 +235,75 @@ class DashboardFrame(ctk.CTkFrame):
                     from worker_app.job_history import add_job_to_history
                     add_job_to_history(self.worker.user_id, job_id, lang_val, code[:80])
                     def _ok():
-                        self._submit_status.configure(text=f"Submitted: {job_id[:12]}...", text_color="green")
+                        self._submit_status.configure(text=f"Submitted. Waiting for result...", text_color="green")
                         self._submit_btn.configure(state="normal")
-                        self._update_jobs_list()
                     self.after(0, _ok)
+                    self._poll_job_and_show_result(job_id)
                 else:
                     def _fail():
                         self._submit_status.configure(text="Submit failed. Check connection and credits.", text_color="red")
                         self._submit_btn.configure(state="normal")
+                        self._show_submit_output("Submit failed.")
                     self.after(0, _fail)
             except Exception as e:
                 def _err():
                     self._submit_status.configure(text=f"Error: {e}", text_color="red")
                     self._submit_btn.configure(state="normal")
+                    self._show_submit_output(f"Error: {e}")
                 self.after(0, _err)
 
         threading.Thread(target=_do_submit, daemon=True).start()
+
+    def _show_submit_output(self, text: str):
+        """Display text in the Submit Job results area."""
+        self._submit_output.configure(state="normal")
+        self._submit_output.delete("1.0", "end")
+        self._submit_output.insert("1.0", text)
+        self._submit_output.configure(state="disabled")
+
+    def _poll_job_and_show_result(self, job_id: str):
+        """Poll job status until complete, then display result in Submit Job tab."""
+        def _poll():
+            import time
+            max_wait = 300
+            start = time.time()
+            while time.time() - start < max_wait:
+                job = self.worker.get_job(job_id) if self.worker.is_connected else None
+                if job:
+                    from worker_app.job_history import update_job_in_history
+                    update_job_in_history(self.worker.user_id, job)
+                    status = job.get("status", "")
+                    if status in ("completed", "failed", "error"):
+                        def _display():
+                            self._display_job_output_in_submit(job)
+                        self.after(0, _display)
+                        return
+                time.sleep(1.5)
+            def _timeout():
+                self._show_submit_output(f"Job {job_id[:12]}...\n\nTimeout waiting for result.")
+            self.after(0, _timeout)
+
+        threading.Thread(target=_poll, daemon=True).start()
+
+    def _display_job_output_in_submit(self, job: Dict[str, Any]):
+        """Display job output in the Submit Job results area."""
+        stdout = job.get("stdout", "")
+        stderr = job.get("stderr", "")
+        exit_code = job.get("exit_code")
+        status = job.get("status", "?")
+        parts = [f"Status: {status}"]
+        if exit_code is not None:
+            parts.append(f"Exit code: {exit_code}")
+        parts.extend([
+            "",
+            "=== stdout ===",
+            stdout or "(empty)",
+            "",
+            "=== stderr ===",
+            stderr or "(empty)",
+        ])
+        text = "\n".join(parts)
+        self._show_submit_output(text)
 
     def _build_jobs_tab(self):
         """Recent jobs tab: list + output viewer."""
@@ -355,13 +419,10 @@ class DashboardFrame(ctk.CTkFrame):
         self._do_refresh()
 
     def _do_refresh(self):
-        """Refresh status, credits, activity, jobs."""
+        """Periodic refresh: only status, activity, pause buttons (local state). Credits and jobs only on manual Refresh."""
         self._update_status()
-        self._update_credits()
         self._update_activity()
         self._update_pause_buttons()
-        if self._tabview.get() == "Recent Jobs":
-            self._update_jobs_list()
         self._refresh_job = self.after(2000, self._do_refresh)
 
     def _update_status(self):
@@ -390,7 +451,7 @@ class DashboardFrame(ctk.CTkFrame):
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _refresh_credits(self):
-        """Manually refresh credits."""
+        """Manually refresh credits (only when Refresh button clicked)."""
         self._update_credits()
 
     def _update_activity(self):
