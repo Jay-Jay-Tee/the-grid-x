@@ -301,6 +301,20 @@ class HybridWorker:
                         self.is_connected = True
                         self.connection_attempts = 0
                         self.last_heartbeat = time.time()
+
+                        # Start periodic heartbeat to coordinator to keep DB last_heartbeat fresh
+                        async def _hb_loop(ws, interval: int = 10):
+                            try:
+                                while True:
+                                    await asyncio.sleep(interval)
+                                    try:
+                                        await ws.send(json.dumps({"type": "hb", "ts": time.time()}))
+                                    except Exception:
+                                        return
+                            except asyncio.CancelledError:
+                                return
+
+                        hb_task = asyncio.create_task(_hb_loop(ws))
                         
                         # Handle messages
                         async for raw in ws:
@@ -330,6 +344,14 @@ class HybridWorker:
                                 
                                 await handle_assign_job(msg, ws, executor, task_queue)
                                 self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
+                    # Ensure heartbeat task is cancelled when websocket context exits
+                    try:
+                        pass
+                    finally:
+                        try:
+                            hb_task.cancel()
+                        except Exception:
+                            pass
                     else:
                         print(f"❌ Authentication failed - check your password")
                         self.activity_log.add_entry("Auth Failed", "Invalid credentials")
