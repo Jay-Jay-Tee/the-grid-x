@@ -133,6 +133,7 @@ pytest -q
 ## License & Authors
 
 Authors: Joshua, Sidharth, Ujjwal, Soorya
+
 License: see `LICENSE` at repo root.
 
 ---

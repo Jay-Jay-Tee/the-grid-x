@@ -12,6 +12,7 @@ GREEN_DIM = "#00cc33"     # Dimmer green for secondary
 GREEN_DARK = "#009922"    # Dark green for subtle elements
 GREEN_BRIGHT = "#39ff14"  # Bright accent neon green
 GREEN_GLOW = "#00ff00"    # Pure green for glow effects
+GREEN_NEON = "#00dd38"    # Slightly dimmed neon for terminal borders (less eye strain)
 
 # Accent colors - Classic terminal palette
 AMBER = "#ffb000"         # Amber for warnings (like old terminals)
@@ -19,9 +20,14 @@ CYAN = "#00ffff"          # Cyan accent
 MAGENTA = "#ff00ff"       # Magenta accent
 RED = "#ff3333"           # Error red
 RED_BRIGHT = "#ff0033"    # Bright alert red
+RED_BORDER = "#cc2222"    # Darker red for terminate button border (visible, not washed out)
 GRAY = "#4a4a4a"          # Muted gray
 GRAY_DARK = "#2a2a2a"     # Dark gray for borders
 GRAY_LIGHT = "#6a6a6a"    # Light gray for disabled
+
+# Tab selected: clearly visible green tint, text stays readable
+TAB_SELECTED_BG = "#0f2812"
+TAB_SELECTED_HOVER_BG = "#123018"
 
 # Font - Terminal monospace
 TERMINAL_FONT = ("Consolas", 14)
