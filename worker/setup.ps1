@@ -46,6 +46,7 @@ Write-Host ""
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
 
 python -m pip install --quiet --upgrade pip setuptools wheel
+Write-Host "  ✓ pip upgraded" -ForegroundColor $Green
 
 if (Test-Path "worker\requirements.txt") {
     pip install --quiet -r worker\requirements.txt
