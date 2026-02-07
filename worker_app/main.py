@@ -15,9 +15,9 @@ if _root not in sys.path:
 
 import customtkinter as ctk
 
-# Configure appearance
+# 90s terminal aesthetic - dark mode, no blue theme
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+# No default theme - we use custom terminal colors everywhere
 
 from worker_app.ui.app import GridXApp
 

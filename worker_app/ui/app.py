@@ -1,10 +1,12 @@
 """
 Main application window - frame switching between login and dashboard.
+90s hacking terminal aesthetic.
 """
 
 import customtkinter as ctk
 from .login_frame import LoginFrame
 from .dashboard_frame import DashboardFrame
+from .theme import BG_DARK
 
 
 class GridXApp(ctk.CTk):
@@ -12,16 +14,20 @@ class GridXApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-        self.title("Grid-X Worker")
-        self.geometry("700x650")
-        self.minsize(500, 500)
+        self.title("GRID-X // WORKER_NODE v1.0")
+        self.geometry("750x700")
+        self.minsize(550, 550)
+
+        # Terminal-style window - black bg
+        self.configure(fg_color=BG_DARK)
+        self._set_terminal_titlebar()
 
         # Handle window close (X button) for proper cleanup
         self.protocol("WM_DELETE_WINDOW", self._handle_close)
 
         # Container for frames
         self._container = ctk.CTkFrame(self, fg_color="transparent")
-        self._container.pack(fill="both", expand=True, padx=20, pady=20)
+        self._container.pack(fill="both", expand=True, padx=16, pady=16)
 
         self._current_frame = None
         self._login_frame = None
@@ -57,6 +63,13 @@ class GridXApp(ctk.CTk):
             self._current_frame._on_quit()
         else:
             self.quit()
+
+    def _set_terminal_titlebar(self):
+        """Attempt to style title bar (platform-dependent)."""
+        try:
+            self.attributes("-topmost", False)
+        except Exception:
+            pass
 
     def _on_quit(self):
         """Called when user quits from dashboard."""

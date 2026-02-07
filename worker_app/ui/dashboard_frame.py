@@ -1,6 +1,7 @@
 """
 Dashboard - connection status, credits, pause/resume toggle, activity log,
 job submission (code/file, language), and recent jobs with output viewer.
+90s hacking terminal aesthetic.
 """
 
 import os
@@ -9,6 +10,11 @@ from tkinter import filedialog
 from typing import Optional, Callable, Any, List, Dict
 
 import customtkinter as ctk
+
+from .theme import (
+    BG_DARK, BG_PANEL, GREEN, GREEN_DIM, GREEN_BRIGHT, AMBER, RED, GRAY,
+    TERMINAL_FONT, TERMINAL_FONT_SMALL, TERMINAL_FONT_LARGE,
+)
 
 # Supported languages (coordinator may restrict to python)
 LANGUAGES = [
@@ -43,136 +49,161 @@ class DashboardFrame(ctk.CTkFrame):
         self._start_refresh()
 
     def _build_ui(self):
-        """Build the dashboard UI with tabs."""
-        # Title
+        """Build the dashboard UI - terminal style."""
+        # Terminal header
         title = ctk.CTkLabel(
             self,
-            text=f"Grid-X Worker : {self.worker.user_id}",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            text=f">>> GRID-X NODE // USER: {self.worker.user_id} <<<",
+            font=TERMINAL_FONT_LARGE,
+            text_color=GREEN,
         )
         title.pack(pady=(0, 10))
 
-        # Tabs
-        self._tabview = ctk.CTkTabview(self)
+        # Tabs - styled for terminal
+        self._tabview = ctk.CTkTabview(
+            self,
+            fg_color=BG_PANEL,
+            segmented_button_fg_color=BG_DARK,
+            segmented_button_selected_color=GREEN_DIM,
+            segmented_button_selected_hover_color=GREEN_DIM,
+            segmented_button_unselected_color=BG_DARK,
+            segmented_button_unselected_hover_color=BG_PANEL,
+            text_color=GREEN,
+            text_color_disabled=GRAY,
+        )
         self._tabview.pack(fill="both", expand=True, pady=(0, 10))
 
-        self._tab_status = self._tabview.add("Status")
-        self._tab_submit = self._tabview.add("Submit Job")
-        self._tab_jobs = self._tabview.add("Recent Jobs")
+        self._tab_status = self._tabview.add("[ STATUS ]")
+        self._tab_submit = self._tabview.add("[ SUBMIT ]")
+        self._tab_jobs = self._tabview.add("[ JOBS ]")
 
         self._build_status_tab()
         self._build_submit_tab()
         self._build_jobs_tab()
 
-        # Quit button
-        ctk.CTkButton(self, text="Quit", command=self._on_quit, width=100, height=32).pack(pady=(10, 0))
+        # Quit - terminal style
+        ctk.CTkButton(
+            self, text="[ TERMINATE ]",
+            command=self._on_quit, width=140, height=32,
+            font=TERMINAL_FONT_SMALL,
+            fg_color=BG_PANEL, text_color=RED, border_width=1, border_color=RED,
+            hover_color=RED, hover=True,
+        ).pack(pady=(10, 0))
 
     def _build_status_tab(self):
-        """Status tab: connection, credits, pause, activity."""
-        # Connection status
+        """Status tab - terminal style."""
+        self._tab_status.configure(fg_color=BG_DARK)
         status_frame = ctk.CTkFrame(self._tab_status, fg_color="transparent")
         status_frame.pack(fill="x", pady=(0, 10))
 
         self._status_indicator = ctk.CTkLabel(
-            status_frame,
-            text="●",
-            font=ctk.CTkFont(size=16),
-            text_color="gray",
+            status_frame, text="[*]", font=TERMINAL_FONT, text_color=AMBER,
         )
         self._status_indicator.pack(side="left", padx=(0, 8))
-        self._status_text = ctk.CTkLabel(status_frame, text="Checking...", font=ctk.CTkFont(size=14))
+        self._status_text = ctk.CTkLabel(
+            status_frame, text="CHECKING...", font=TERMINAL_FONT, text_color=AMBER,
+        )
         self._status_text.pack(side="left")
 
-        # Credits
         credits_frame = ctk.CTkFrame(self._tab_status, fg_color="transparent")
         credits_frame.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(credits_frame, text="Credits: ", font=ctk.CTkFont(size=14)).pack(side="left")
-        self._credits_label = ctk.CTkLabel(credits_frame, text="NULL", font=ctk.CTkFont(size=14, weight="bold"))
+        ctk.CTkLabel(credits_frame, text="> CREDITS: ", font=TERMINAL_FONT, text_color=GREEN_DIM).pack(side="left")
+        self._credits_label = ctk.CTkLabel(
+            credits_frame, text="--", font=TERMINAL_FONT, text_color=GREEN,
+        )
         self._credits_label.pack(side="left")
         self._refresh_credits_btn = ctk.CTkButton(
-            credits_frame,
-            text="Refresh",
-            width=70,
-            height=24,
-            command=self._refresh_credits,
+            credits_frame, text="[ REFRESH ]", width=100, height=26,
+            font=TERMINAL_FONT_SMALL, command=self._refresh_credits,
+            fg_color=BG_PANEL, text_color=GREEN_DIM, border_width=1, border_color=GREEN_DIM,
         )
         self._refresh_credits_btn.pack(side="left", padx=(10, 0))
 
-        # Pause / Resume
         toggle_frame = ctk.CTkFrame(self._tab_status, fg_color="transparent")
         toggle_frame.pack(fill="x", pady=(10, 15))
 
         self._pause_btn = ctk.CTkButton(
-            toggle_frame,
-            text="Pause",
-            command=self._on_pause_toggle,
-            width=120,
-            height=36,
-            fg_color="#c75c5c",
-            hover_color="#a04a4a",
+            toggle_frame, text="[ PAUSE ]", command=self._on_pause_toggle,
+            width=110, height=34, font=TERMINAL_FONT_SMALL,
+            fg_color=BG_PANEL, text_color=AMBER, border_width=1, border_color=AMBER,
         )
         self._pause_btn.pack(side="left", padx=(0, 8))
 
         self._resume_btn = ctk.CTkButton(
-            toggle_frame,
-            text="Resume",
-            command=self._on_pause_toggle,
-            width=120,
-            height=36,
-            state="disabled",
+            toggle_frame, text="[ RESUME ]", command=self._on_pause_toggle,
+            width=110, height=34, font=TERMINAL_FONT_SMALL, state="disabled",
+            fg_color=BG_PANEL, text_color=GREEN_DIM, border_width=1, border_color=GREEN_DIM,
         )
         self._resume_btn.pack(side="left")
 
-        # Activity log
-        ctk.CTkLabel(self._tab_status, text="Recent Activity", font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", pady=(15, 5)
+        ctk.CTkLabel(
+            self._tab_status, text="> LOG:", font=TERMINAL_FONT,
+            text_color=GREEN_DIM,
+        ).pack(anchor="w", pady=(15, 5))
+        self._activity_text = ctk.CTkTextbox(
+            self._tab_status, height=200, state="disabled", wrap="word",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
-        self._activity_text = ctk.CTkTextbox(self._tab_status, height=200, state="disabled", wrap="word")
         self._activity_text.pack(fill="both", expand=True, pady=(0, 10))
 
     def _build_submit_tab(self):
-        """Submit job tab: code input, file load, language, submit."""
-        ctk.CTkLabel(self._tab_submit, text="Code", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", pady=(0, 5))
-        self._code_text = ctk.CTkTextbox(self._tab_submit, height=120, wrap="word", font=ctk.CTkFont(family="Consolas", size=12))
+        """Submit job tab - terminal style."""
+        self._tab_submit.configure(fg_color=BG_DARK)
+        ctk.CTkLabel(
+            self._tab_submit, text="> SOURCE:", font=TERMINAL_FONT, text_color=GREEN_DIM,
+        ).pack(anchor="w", pady=(0, 5))
+        self._code_text = ctk.CTkTextbox(
+            self._tab_submit, height=120, wrap="word",
+            font=ctk.CTkFont(family="Consolas", size=12),
+            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
+        )
         self._code_text.pack(fill="x", pady=(0, 10))
-        self._code_text.insert("1.0", "# Enter your code here\nprint('Hello from Grid-X!')")
+        self._code_text.insert("1.0", "# EXECUTE REMOTE\nprint('Hello from Grid-X!')")
 
         btn_row = ctk.CTkFrame(self._tab_submit, fg_color="transparent")
         btn_row.pack(fill="x", pady=(0, 10))
 
-        ctk.CTkButton(btn_row, text="Load from file", width=120, command=self._load_code_from_file).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(
+            btn_row, text="[ LOAD FILE ]", width=120, font=TERMINAL_FONT_SMALL,
+            command=self._load_code_from_file,
+            fg_color=BG_PANEL, text_color=GREEN_DIM, border_width=1, border_color=GREEN_DIM,
+        ).pack(side="left", padx=(0, 10))
 
-        ctk.CTkLabel(btn_row, text="Language:", font=ctk.CTkFont(size=14)).pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(btn_row, text="LANG:", font=TERMINAL_FONT_SMALL, text_color=GREEN_DIM).pack(side="left", padx=(10, 5))
         self._language_var = ctk.StringVar(value="Python")
         self._language_menu = ctk.CTkOptionMenu(
-            btn_row,
-            values=[label for label, _ in LANGUAGES],
-            variable=self._language_var,
-            width=120,
+            btn_row, values=[label for label, _ in LANGUAGES],
+            variable=self._language_var, width=100,
+            font=TERMINAL_FONT_SMALL,
+            fg_color=BG_PANEL, button_color=GREEN_DIM, button_hover_color=GREEN,
+            dropdown_fg_color=BG_PANEL, dropdown_text_color=GREEN,
         )
         self._language_menu.pack(side="left", padx=(0, 10))
 
         self._submit_btn = ctk.CTkButton(
-            btn_row,
-            text="Submit Job",
-            width=120,
-            height=32,
-            command=self._on_submit_job,
+            btn_row, text="[ EXECUTE ]", width=120, height=32,
+            font=TERMINAL_FONT_SMALL, command=self._on_submit_job,
+            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN,
         )
         self._submit_btn.pack(side="left")
 
-        self._submit_status = ctk.CTkLabel(self._tab_submit, text="", text_color="gray", wraplength=400)
+        self._submit_status = ctk.CTkLabel(
+            self._tab_submit, text="", font=TERMINAL_FONT_SMALL,
+            text_color=AMBER, wraplength=400,
+        )
         self._submit_status.pack(anchor="w", pady=(5, 0))
 
-        # Results output area - shows stdout/stderr of submitted job
-        ctk.CTkLabel(self._tab_submit, text="Results", font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", pady=(15, 5)
-        )
+        ctk.CTkLabel(
+            self._tab_submit, text="> OUTPUT:", font=TERMINAL_FONT, text_color=GREEN_DIM,
+        ).pack(anchor="w", pady=(15, 5))
         self._submit_output = ctk.CTkTextbox(
-            self._tab_submit, height=150, state="disabled", wrap="word", font=ctk.CTkFont(family="Consolas", size=12)
+            self._tab_submit, height=150, state="disabled", wrap="word",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
         self._submit_output.pack(fill="both", expand=True, pady=(0, 10))
-        self._show_submit_output("Submit code to see results here.")
+        self._show_submit_output("> Awaiting execution...")
 
     def _get_language_value(self) -> str:
         """Map displayed language name to API value."""
@@ -207,26 +238,26 @@ class DashboardFrame(ctk.CTkFrame):
                     self._language_var.set("JavaScript")
                 elif ext == ".sh":
                     self._language_var.set("Bash")
-                self._submit_status.configure(text=f"Loaded: {os.path.basename(path)}", text_color="gray")
+                self._submit_status.configure(text=f"[ OK ] Loaded: {os.path.basename(path)}", text_color=GREEN_DIM)
             except Exception as e:
-                self._submit_status.configure(text=f"Error: {e}", text_color="red")
+                self._submit_status.configure(text=f"[ ERROR ] {e}", text_color=RED)
 
     def _on_submit_job(self):
         """Submit the code as a job."""
         code = self._code_text.get("1.0", "end").strip()
         if not code:
-            self._submit_status.configure(text="Please enter some code.", text_color="orange")
+            self._submit_status.configure(text="[ ! ] Enter source code.", text_color=AMBER)
             return
 
         lang_val = self._get_language_value()
 
         if not self.worker.is_connected:
-            self._submit_status.configure(text="Not connected. Connect first to submit jobs.", text_color="red")
+            self._submit_status.configure(text="[ X ] OFFLINE. Connect first.", text_color=RED)
             return
 
         self._submit_btn.configure(state="disabled")
-        self._submit_status.configure(text="Submitting...", text_color="gray")
-        self._show_submit_output("Waiting...")
+        self._submit_status.configure(text="[ * ] Dispatching...", text_color=GREEN_DIM)
+        self._show_submit_output("> Waiting for remote execution...")
 
         def _do_submit():
             try:
@@ -235,21 +266,21 @@ class DashboardFrame(ctk.CTkFrame):
                     from worker_app.job_history import add_job_to_history
                     add_job_to_history(self.worker.user_id, job_id, lang_val, code[:80])
                     def _ok():
-                        self._submit_status.configure(text=f"Submitted. Waiting for result...", text_color="green")
+                        self._submit_status.configure(text="[ OK ] Submitted. Awaiting result...", text_color=GREEN)
                         self._submit_btn.configure(state="normal")
                     self.after(0, _ok)
                     self._poll_job_and_show_result(job_id)
                 else:
                     def _fail():
-                        self._submit_status.configure(text="Submit failed. Check connection and credits.", text_color="red")
+                        self._submit_status.configure(text="[ FAIL ] Check connection & credits.", text_color=RED)
                         self._submit_btn.configure(state="normal")
-                        self._show_submit_output("Submit failed.")
+                        self._show_submit_output("> EXECUTION FAILED")
                     self.after(0, _fail)
             except Exception as e:
                 def _err():
-                    self._submit_status.configure(text=f"Error: {e}", text_color="red")
+                    self._submit_status.configure(text=f"[ ERROR ] {e}", text_color=RED)
                     self._submit_btn.configure(state="normal")
-                    self._show_submit_output(f"Error: {e}")
+                    self._show_submit_output(f"> ERROR: {e}")
                 self.after(0, _err)
 
         threading.Thread(target=_do_submit, daemon=True).start()
@@ -306,20 +337,31 @@ class DashboardFrame(ctk.CTkFrame):
         self._show_submit_output(text)
 
     def _build_jobs_tab(self):
-        """Recent jobs tab: list + output viewer."""
+        """Recent jobs tab - terminal style."""
+        self._tab_jobs.configure(fg_color=BG_DARK)
         top_row = ctk.CTkFrame(self._tab_jobs, fg_color="transparent")
         top_row.pack(fill="x", pady=(0, 5))
-        ctk.CTkLabel(top_row, text="Recent Jobs", font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
-        ctk.CTkButton(top_row, text="Refresh", width=80, command=self._update_jobs_list).pack(side="right")
+        ctk.CTkLabel(top_row, text="> JOB QUEUE:", font=TERMINAL_FONT, text_color=GREEN_DIM).pack(side="left")
+        ctk.CTkButton(
+            top_row, text="[ REFRESH ]", width=100, font=TERMINAL_FONT_SMALL,
+            command=self._update_jobs_list,
+            fg_color=BG_PANEL, text_color=GREEN_DIM, border_width=1, border_color=GREEN_DIM,
+        ).pack(side="right")
 
-        # Jobs list (scrollable)
-        self._jobs_frame = ctk.CTkScrollableFrame(self._tab_jobs, height=120)
+        self._jobs_frame = ctk.CTkScrollableFrame(
+            self._tab_jobs, height=120,
+            fg_color=BG_PANEL, scrollbar_button_color=GREEN_DIM, scrollbar_button_hover_color=GREEN,
+        )
         self._jobs_frame.pack(fill="x", pady=(0, 10))
 
-        ctk.CTkLabel(self._tab_jobs, text="Output (click a job)", font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", pady=(5, 5)
+        ctk.CTkLabel(
+            self._tab_jobs, text="> OUTPUT (select job):", font=TERMINAL_FONT, text_color=GREEN_DIM,
+        ).pack(anchor="w", pady=(5, 5))
+        self._output_text = ctk.CTkTextbox(
+            self._tab_jobs, height=150, state="disabled", wrap="word",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
-        self._output_text = ctk.CTkTextbox(self._tab_jobs, height=150, state="disabled", wrap="word", font=ctk.CTkFont(family="Consolas", size=12))
         self._output_text.pack(fill="both", expand=True, pady=(0, 10))
 
     def _update_jobs_list(self):
@@ -343,7 +385,12 @@ class DashboardFrame(ctk.CTkFrame):
             w.destroy()
 
         if not jobs:
-            ctk.CTkLabel(self._jobs_frame, text="No jobs yet. Submit code in the Submit Job tab.", text_color="gray").pack(anchor="w")
+            ctk.CTkLabel(
+                self._jobs_frame,
+                text="> No jobs. Run [ SUBMIT ] tab.",
+                font=TERMINAL_FONT_SMALL,
+                text_color=GRAY,
+            ).pack(anchor="w")
             return
 
         for j in jobs[:30]:
@@ -353,11 +400,11 @@ class DashboardFrame(ctk.CTkFrame):
             row = ctk.CTkFrame(self._jobs_frame, fg_color="transparent")
             row.pack(fill="x", pady=2)
 
-            color = "green" if status == "completed" else ("red" if status in ("failed", "error") else "gray")
+            color = GREEN if status == "completed" else (RED if status in ("failed", "error") else GRAY)
             lbl = ctk.CTkLabel(
                 row,
-                text=f"{job_id[:12]}... | {status} | {lang}",
-                font=ctk.CTkFont(size=12),
+                text=f"> {job_id[:12]}... | {status} | {lang}",
+                font=TERMINAL_FONT_SMALL,
                 text_color=color,
                 cursor="hand2",
             )
@@ -428,14 +475,14 @@ class DashboardFrame(ctk.CTkFrame):
     def _update_status(self):
         """Update connection status display."""
         if self.worker.is_connected:
-            self._status_indicator.configure(text_color="green")
-            self._status_text.configure(text="Connected")
+            self._status_indicator.configure(text_color=GREEN, text="[+]")
+            self._status_text.configure(text="ONLINE", text_color=GREEN)
         elif self.worker.is_paused():
-            self._status_indicator.configure(text_color="orange")
-            self._status_text.configure(text="Paused")
+            self._status_indicator.configure(text_color=AMBER, text="[=]")
+            self._status_text.configure(text="PAUSED", text_color=AMBER)
         else:
-            self._status_indicator.configure(text_color="red")
-            self._status_text.configure(text="Disconnected")
+            self._status_indicator.configure(text_color=RED, text="[X]")
+            self._status_text.configure(text="OFFLINE", text_color=RED)
 
     def _update_credits(self):
         """Update credits display (fetch in thread to avoid blocking)."""
@@ -443,9 +490,9 @@ class DashboardFrame(ctk.CTkFrame):
             bal = self.worker.get_credits()
             def _set():
                 if bal is not None:
-                    self._credits_label.configure(text=f"{bal:.2f}")
+                    self._credits_label.configure(text=f"{bal:.2f}", text_color=GREEN)
                 else:
-                    self._credits_label.configure(text="—")
+                    self._credits_label.configure(text="--", text_color=GRAY)
             self.after(0, _set)
 
         threading.Thread(target=_fetch, daemon=True).start()
@@ -466,7 +513,7 @@ class DashboardFrame(ctk.CTkFrame):
                 lines.append(f"[{ts}] {typ}: {details}")
             else:
                 lines.append(f"[{ts}] {typ}")
-        text = "\n".join(lines) if lines else "No activity yet."
+        text = "\n".join(lines) if lines else "> No activity."
         self._activity_text.configure(state="normal")
         self._activity_text.delete("1.0", "end")
         self._activity_text.insert("1.0", text)
