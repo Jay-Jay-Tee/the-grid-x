@@ -229,6 +229,41 @@ def db_list_jobs_by_user(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def db_list_recent_jobs(limit: int = 100) -> List[Dict[str, Any]]:
+    """List recent jobs across all users (most recent first)."""
+    limit = max(1, min(limit, 500))
+    rows = get_db().execute(
+        "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def db_list_jobs_with_workers(statuses: Optional[List[str]] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    """List jobs with optional status filter and worker owner info (for admin views)."""
+    limit = max(1, min(limit, 500))
+    conn = get_db()
+
+    base_query = (
+        "SELECT j.*, w.owner_id AS worker_owner "
+        "FROM jobs j "
+        "LEFT JOIN workers w ON j.worker_id = w.id "
+    )
+
+    params: List[Any] = []
+
+    if statuses:
+        placeholders = ",".join(["?"] * len(statuses))
+        base_query += f"WHERE j.status IN ({placeholders}) "
+        params.extend(statuses)
+
+    base_query += "ORDER BY j.created_at DESC LIMIT ?"
+    params.append(limit)
+
+    rows = conn.execute(base_query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
 def db_update_job_status(
     job_id: str,
     status: str,
@@ -572,3 +607,14 @@ def db_verify_user_auth(user_id: str, auth_token: str) -> bool:
     except Exception as e:
         logger.error(f"db_verify_user_auth failed: {e}")
         return False
+
+
+def db_list_users(limit: int = 100) -> List[Dict[str, Any]]:
+    """List users with balances for admin views."""
+    limit = max(1, min(limit, 500))
+    rows = get_db().execute(
+        "SELECT user_id, balance, total_earned, total_spent, last_updated "
+        "FROM user_credits ORDER BY balance DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]

@@ -21,7 +21,8 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 # Import from common module (now properly implemented)
 import sys
@@ -47,6 +48,9 @@ from coordinator.database import (
     db_get_job,
     db_list_jobs_by_user,
     db_list_workers,
+    db_list_recent_jobs,
+    db_list_jobs_with_workers,
+    db_list_users,
     get_db,
     db_create_job,
     db_upsert_worker,
@@ -60,9 +64,12 @@ from coordinator.credit_manager import (
     get_max_reserve,
 )
 from coordinator.scheduler import job_queue, dispatch, watchdog_loop
+from coordinator.workers import workers_ws, disconnect_worker
 
 # Import so WS server runs
 from coordinator.websocket import run_ws
+
+ADMIN_STATIC_DIR = os.path.join(os.path.dirname(__file__), "admin_ui")
 
 # Configure logging
 logging.basicConfig(
@@ -112,6 +119,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve admin static assets if present
+if os.path.isdir(ADMIN_STATIC_DIR):
+    app.mount(
+        "/admin/static",
+        StaticFiles(directory=ADMIN_STATIC_DIR),
+        name="admin_static",
+    )
 
 
 # ============================================================================
@@ -449,6 +464,57 @@ async def get_status():
         "queue_size": job_queue.qsize(),
         "timestamp": now()
     }
+
+
+# ============================================================================
+# ADMIN ENDPOINTS & UI
+# ============================================================================
+
+
+@app.get("/admin/overview")
+async def admin_overview(limit: int = 50) -> Dict[str, Any]:
+    """Admin snapshot: workers, jobs, and users."""
+    limit = min(max(int(limit), 1), 200)
+
+    workers = db_list_workers()
+    running_jobs = db_list_jobs_with_workers(["running"], limit)
+    queued_jobs = db_list_jobs_with_workers(["queued"], limit)
+    recent_jobs = db_list_recent_jobs(limit)
+    users = db_list_users(200)
+
+    return {
+        "workers": workers,
+        "connected_worker_ids": list(workers_ws.keys()),
+        "jobs": {
+            "running": running_jobs,
+            "queued": queued_jobs,
+            "recent": recent_jobs,
+        },
+        "users": users,
+        "timestamp": now(),
+    }
+
+
+@app.post("/admin/workers/{worker_id}/disconnect")
+async def admin_disconnect_worker(worker_id: str) -> Dict[str, Any]:
+    """Force-disconnect a worker websocket and mark it offline."""
+    if not validate_uuid(worker_id):
+        raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
+
+    ok = await disconnect_worker(worker_id)
+    if not ok:
+        raise HTTPException(HTTP_NOT_FOUND, "Worker not connected or already offline")
+
+    return {"success": True, "worker_id": worker_id}
+
+
+@app.get("/admin")
+async def admin_page():
+    """Serve the admin dashboard page."""
+    index_path = os.path.join(ADMIN_STATIC_DIR, "admin.html")
+    if not os.path.exists(index_path):
+        raise HTTPException(HTTP_NOT_FOUND, "Admin UI not found. Did you run the frontend scaffold?")
+    return FileResponse(index_path, media_type="text/html")
 
 
 # ============================================================================

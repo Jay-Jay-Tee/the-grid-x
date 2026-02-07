@@ -11,7 +11,7 @@ import asyncio
 import os
 from typing import Any, Dict, Optional
 
-from .database import now
+from .database import now, db_set_worker_offline
 
 # In-memory: worker_id -> {ws, caps, status, last_seen}
 workers_ws: Dict[str, Dict[str, Any]] = {}
@@ -117,3 +117,32 @@ def update_worker_last_seen(worker_id: str) -> None:
 def get_worker_ws(worker_id: str) -> Optional[Any]:
     entry = workers_ws.get(worker_id)
     return entry["ws"] if entry else None
+
+
+async def disconnect_worker(worker_id: str) -> bool:
+    """Force-disconnect a worker websocket and mark it offline."""
+    try:
+        async with lock:
+            entry = workers_ws.get(worker_id)
+            ws = entry.get("ws") if entry else None
+
+            if not entry:
+                return False
+
+            # Attempt graceful close
+            if ws:
+                try:
+                    await ws.close(code=4400, reason="Disconnected by admin")
+                except Exception:
+                    pass
+
+            unregister_worker_ws(worker_id)
+
+        try:
+            db_set_worker_offline(worker_id)
+        except Exception:
+            pass
+
+        return True
+    except Exception:
+        return False

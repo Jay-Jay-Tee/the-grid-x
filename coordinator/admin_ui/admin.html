@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grid-X Admin Console</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0f14;
+      --panel: #101820;
+      --accent: #6ef3a5;
+      --accent-2: #7dd3ff;
+      --warn: #ffb347;
+      --error: #ff6b6b;
+      --muted: #9aa7b8;
+      --text: #e9f2ff;
+      --border: #1c2a36;
+      --font: 'Space Grotesk', 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: radial-gradient(120% 120% at 10% 20%, rgba(110,243,165,0.08), transparent),
+                  radial-gradient(120% 120% at 80% 0%, rgba(125,211,255,0.07), transparent),
+                  var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 32px auto 48px;
+      padding: 0 20px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0;
+      letter-spacing: 0.04em;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(110,243,165,0.14);
+      color: var(--accent);
+      font-size: 13px;
+      border: 1px solid rgba(110,243,165,0.3);
+    }
+    .pill.warn { background: rgba(255,179,71,0.12); color: var(--warn); border-color: rgba(255,179,71,0.35); }
+    .pill.error { background: rgba(255,107,107,0.12); color: var(--error); border-color: rgba(255,107,107,0.35); }
+    section { margin-top: 18px; }
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.28);
+    }
+    .stat-title { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+    .stat-value { font-size: 24px; font-weight: 600; letter-spacing: 0.04em; }
+    .section-title { margin: 0 0 10px; font-size: 15px; color: var(--muted); letter-spacing: 0.04em; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 6px; text-align: left; }
+    th { color: var(--muted); font-weight: 500; letter-spacing: 0.04em; }
+    tr:not(:last-child) td { border-bottom: 1px solid var(--border); }
+    tbody tr:hover td { background: rgba(255,255,255,0.02); }
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid transparent; }
+    .badge.running { background: rgba(125,211,255,0.12); color: var(--accent-2); border-color: rgba(125,211,255,0.4); }
+    .badge.queued { background: rgba(255,179,71,0.12); color: var(--warn); border-color: rgba(255,179,71,0.4); }
+    .badge.completed { background: rgba(110,243,165,0.12); color: var(--accent); border-color: rgba(110,243,165,0.35); }
+    .badge.failed, .badge.error { background: rgba(255,107,107,0.12); color: var(--error); border-color: rgba(255,107,107,0.4); }
+    button {
+      background: linear-gradient(120deg, #1b2b38, #17232e);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    .disconnect { color: var(--error); border-color: rgba(255,107,107,0.4); }
+    .disconnect:hover { color: #fff; background: rgba(255,107,107,0.18); border-color: var(--error); }
+    .subtitle { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+    .flex { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>GRID-X // ADMIN</h1>
+        <p class="subtitle">Live view of jobs, workers, and users</p>
+      </div>
+      <span class="pill" id="timestamp">Loading...</span>
+    </header>
+
+    <section class="grid" id="stats">
+      <div class="card">
+        <div class="stat-title">Active Workers</div>
+        <div class="stat-value" id="stat-active-workers">--</div>
+      </div>
+      <div class="card">
+        <div class="stat-title">Running Jobs</div>
+        <div class="stat-value" id="stat-running">--</div>
+      </div>
+      <div class="card">
+        <div class="stat-title">Queued Jobs</div>
+        <div class="stat-value" id="stat-queued">--</div>
+      </div>
+      <div class="card">
+        <div class="stat-title">Registered Users</div>
+        <div class="stat-value" id="stat-users">--</div>
+      </div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Running Jobs</h3>
+      <div class="card" id="running-jobs"></div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Queued Jobs</h3>
+      <div class="card" id="queued-jobs"></div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Recent Jobs</h3>
+      <div class="card" id="recent-jobs"></div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Workers</h3>
+      <div class="card" id="workers"></div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Users</h3>
+      <div class="card" id="users"></div>
+    </section>
+  </div>
+
+  <script>
+    const fmtId = (id = '') => id ? id.slice(0, 8) + '…' : '—';
+    const fmtTs = (ts) => {
+      if (!ts) return '—';
+      const num = Number(ts);
+      if (!Number.isFinite(num)) return '—';
+      const d = new Date(num * 1000);
+      return d.toLocaleString();
+    };
+
+    const badge = (status) => {
+      const s = (status || '').toLowerCase();
+      const cls = s === 'running' ? 'running' : s === 'queued' ? 'queued' : (s === 'failed' || s === 'error') ? 'failed' : 'completed';
+      return `<span class="badge ${cls}">${status || 'unknown'}</span>`;
+    };
+
+    const renderTable = (el, rows, cols) => {
+      if (!rows || rows.length === 0) {
+        el.innerHTML = '<div class="empty">No data</div>';
+        return;
+      }
+      const head = cols.map(c => `<th>${c.label}</th>`).join('');
+      const body = rows.map(r => {
+        const tds = cols.map(c => {
+          const val = c.render ? c.render(r) : (r[c.key] ?? '');
+          return `<td>${val}</td>`;
+        }).join('');
+        return `<tr>${tds}</tr>`;
+      }).join('');
+      el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    };
+
+    const disconnectWorker = async (id) => {
+      if (!id) return;
+      try {
+        const res = await fetch(`/admin/workers/${id}/disconnect`, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        await loadData();
+      } catch (err) {
+        alert('Failed to disconnect: ' + err);
+      }
+    };
+
+    const loadData = async () => {
+      try {
+        const res = await fetch('/admin/overview');
+        if (!res.ok) throw new Error('Request failed');
+        const data = await res.json();
+
+        // Stats
+        document.getElementById('timestamp').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        document.getElementById('stat-active-workers').textContent = data.workers?.length ?? 0;
+        document.getElementById('stat-running').textContent = data.jobs?.running?.length ?? 0;
+        document.getElementById('stat-queued').textContent = data.jobs?.queued?.length ?? 0;
+        document.getElementById('stat-users').textContent = data.users?.length ?? 0;
+
+        // Running jobs
+        renderTable(
+          document.getElementById('running-jobs'),
+          data.jobs?.running || [],
+          [
+            { key: 'id', label: 'Job', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
+            { key: 'user_id', label: 'Submitted By' },
+            { key: 'worker_id', label: 'Worker', render: r => `<span class="mono">${fmtId(r.worker_id)}</span>` },
+            { key: 'worker_owner', label: 'Worker Owner' },
+            { key: 'status', label: 'Status', render: r => badge(r.status) },
+            { key: 'created_at', label: 'Created', render: r => fmtTs(r.created_at) },
+          ]
+        );
+
+        // Queued jobs
+        renderTable(
+          document.getElementById('queued-jobs'),
+          data.jobs?.queued || [],
+          [
+            { key: 'id', label: 'Job', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
+            { key: 'user_id', label: 'Submitted By' },
+            { key: 'status', label: 'Status', render: r => badge(r.status) },
+            { key: 'created_at', label: 'Created', render: r => fmtTs(r.created_at) },
+          ]
+        );
+
+        // Recent jobs
+        renderTable(
+          document.getElementById('recent-jobs'),
+          (data.jobs?.recent || []).slice(0, 20),
+          [
+            { key: 'id', label: 'Job', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
+            { key: 'user_id', label: 'Submitted By' },
+            { key: 'status', label: 'Status', render: r => badge(r.status) },
+            { key: 'worker_id', label: 'Worker', render: r => `<span class="mono">${fmtId(r.worker_id)}</span>` },
+            { key: 'created_at', label: 'Created', render: r => fmtTs(r.created_at) },
+          ]
+        );
+
+        // Workers
+        const connected = new Set(data.connected_worker_ids || []);
+        renderTable(
+          document.getElementById('workers'),
+          data.workers || [],
+          [
+            { key: 'id', label: 'Worker', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
+            { key: 'owner_id', label: 'Owner' },
+            { key: 'status', label: 'Status', render: r => badge(r.status) },
+            { key: 'ip', label: 'IP' },
+            { key: 'last_heartbeat', label: 'Last Seen', render: r => fmtTs(r.last_heartbeat) },
+            { key: 'actions', label: 'Actions', render: r => connected.has(r.id)
+              ? `<button class="disconnect" onclick="disconnectWorker('${r.id}')">Disconnect</button>`
+              : '<span class="muted">Offline</span>' },
+          ]
+        );
+
+        // Users
+        renderTable(
+          document.getElementById('users'),
+          data.users || [],
+          [
+            { key: 'user_id', label: 'User' },
+            { key: 'balance', label: 'Balance', render: r => (r.balance ?? 0).toFixed(2) },
+            { key: 'total_earned', label: 'Earned', render: r => (r.total_earned ?? 0).toFixed(2) },
+            { key: 'total_spent', label: 'Spent', render: r => (r.total_spent ?? 0).toFixed(2) },
+            { key: 'last_updated', label: 'Updated', render: r => fmtTs(r.last_updated) },
+          ]
+        );
+      } catch (err) {
+        console.error(err);
+        document.getElementById('timestamp').textContent = 'Failed to load';
+      }
+    };
+
+    loadData();
+    setInterval(loadData, 5000);
+  </script>
+</body>
+</html>
