@@ -79,7 +79,11 @@ class ResourceMonitor:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 
                 # Get GPU name
-                name = pynvml.nvmlDeviceGetName(handle).decode('utf-8')
+                name_raw = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(name_raw, bytes):
+                    name = name_raw.decode('utf-8')
+                else:
+                    name = str(name_raw)
                 
                 # Get memory info
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
