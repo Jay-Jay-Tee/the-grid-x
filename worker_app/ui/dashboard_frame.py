@@ -135,7 +135,7 @@ class DashboardFrame(ctk.CTkFrame):
             command=self._on_quit, width=160, height=36,
             font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
             fg_color=BG_PANEL, text_color=RED_BRIGHT,
-            border_width=2, border_color=RED_BORDER,
+            border_width=2, border_color=RED_BRIGHT,
             hover_color=BG_DARKEST, hover=True,
             corner_radius=0,
         )
