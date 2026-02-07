@@ -150,9 +150,9 @@ class LoginFrame(ctk.CTkFrame):
         ).pack(side="left")
         
         self._coordinator_ip = ctk.CTkEntry(
-            inner_form, placeholder_text="https://your-coordinator.up.railway.app", 
+            inner_form, placeholder_text="https://your-coordinator.example.com",
             width=340,
-            font=TERMINAL_FONT_SMALL, fg_color=BG_DARKEST, 
+            font=TERMINAL_FONT_SMALL, fg_color=BG_DARKEST,
             border_color=GREEN_DIM, border_width=2,
             text_color=GREEN, placeholder_text_color=GRAY,
         )
