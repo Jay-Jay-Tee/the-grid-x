@@ -24,7 +24,7 @@ catch {
 }
 
 try {
-    $PipVersion = pip --version 2>&1
+    pip --version | Out-Null
     Write-Host "pip found" -ForegroundColor Green
 }
 catch {
