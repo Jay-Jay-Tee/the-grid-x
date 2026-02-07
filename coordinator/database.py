@@ -448,7 +448,8 @@ def db_set_worker_status(worker_id: str, status: str) -> None:
             logger.warning("Invalid worker_id in db_set_worker_status")
             return
         conn = get_db()
-        conn.execute("UPDATE workers SET status=? WHERE id=?", (status, worker_id))
+        # Update status and refresh last_heartbeat to mark worker as recently seen
+        conn.execute("UPDATE workers SET status=?, last_heartbeat=? WHERE id=?", (status, now(), worker_id))
         conn.commit()
     except Exception as e:
         logger.error(f"db_set_worker_status failed: {e}")

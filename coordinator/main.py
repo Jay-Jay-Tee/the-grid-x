@@ -58,7 +58,7 @@ from coordinator.credit_manager import (
     credit,
     get_job_cost
 )
-from coordinator.scheduler import job_queue, dispatch
+from coordinator.scheduler import job_queue, dispatch, watchdog_loop
 
 # Import so WS server runs
 from coordinator.websocket import run_ws
@@ -460,6 +460,8 @@ def main() -> None:
         """Run both HTTP and WebSocket servers"""
         # Start WebSocket server
         ws_task = asyncio.create_task(run_ws())
+        # Start scheduler watchdog to requeue stuck jobs
+        watchdog_task = asyncio.create_task(watchdog_loop())
         
         # Start HTTP server
         config = uvicorn.Config(

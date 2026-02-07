@@ -29,6 +29,54 @@ from .credit_manager import credit, get_worker_reward
 job_queue: asyncio.Queue[str] = asyncio.Queue()
 
 
+async def watchdog_loop(check_interval: int = 15, heartbeat_timeout: int = 30) -> None:
+    """Periodically requeue jobs stuck in 'running' whose worker heartbeat is stale.
+
+    - check_interval: seconds between checks
+    - heartbeat_timeout: seconds since last_heartbeat after which worker is considered dead
+    """
+    while True:
+        try:
+            conn = get_db()
+            rows = conn.execute(
+                "SELECT id, worker_id FROM jobs WHERE status='running'"
+            ).fetchall()
+
+            for r in rows:
+                job_id = r["id"]
+                worker_id = r["worker_id"]
+                if not worker_id:
+                    continue
+
+                w = conn.execute("SELECT last_heartbeat FROM workers WHERE id=?", (worker_id,)).fetchone()
+                last = w["last_heartbeat"] if w else None
+
+                # If no heartbeat recorded or it's older than timeout, requeue
+                import time
+                now_ts = time.time()
+                if not last or (now_ts - float(last) > heartbeat_timeout):
+                    # Mark worker offline and requeue
+                    try:
+                        conn.execute("UPDATE workers SET status=? WHERE id=?", ("offline", worker_id))
+                        conn.execute(
+                            "UPDATE jobs SET status=?, worker_id=? WHERE id=?",
+                            ("queued", None, job_id),
+                        )
+                        conn.commit()
+                        # Put back into in-memory queue for dispatch
+                        try:
+                            await job_queue.put(job_id)
+                        except Exception:
+                            pass
+                    except Exception:
+                        conn.rollback()
+
+        except Exception:
+            pass
+
+        await asyncio.sleep(check_interval)
+
+
 async def dispatch() -> None:
     """
     FIFO + first idle worker. Assigns queued jobs to idle workers over WebSocket.
