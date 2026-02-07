@@ -15,7 +15,7 @@ import asyncio
 import os
 import uuid
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -45,6 +45,7 @@ from common.constants import (
 
 from coordinator.database import (
     db_get_job,
+    db_list_jobs_by_user,
     db_list_workers,
     get_db,
     db_create_job,
@@ -246,6 +247,21 @@ async def submit_job(body: Dict[str, Any]) -> Dict[str, Any]:
             HTTP_INTERNAL_ERROR,
             f"Job creation failed: {str(e)}"
         )
+
+
+@app.get("/jobs")
+async def list_jobs(user_id: Optional[str] = None, limit: int = 50) -> Any:
+    """
+    List jobs for a user. Requires user_id query parameter.
+    Returns list of jobs, most recent first.
+    """
+    if not user_id:
+        raise HTTPException(HTTP_BAD_REQUEST, "user_id query parameter is required")
+    if not validate_user_id(user_id):
+        raise HTTPException(HTTP_BAD_REQUEST, f"Invalid user_id: {user_id}")
+    limit = min(max(1, limit), 100)
+    jobs = db_list_jobs_by_user(user_id, limit=limit)
+    return jobs
 
 
 @app.get("/jobs/{job_id}")

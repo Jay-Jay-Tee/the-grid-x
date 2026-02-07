@@ -176,7 +176,10 @@ class HybridWorker:
         self.is_connected = False
         self.last_heartbeat = 0
         self.connection_attempts = 0
-        
+
+        # Pause/resume for UI control (when True, worker disconnects and does not reconnect)
+        self._paused = False
+
         print(f"\n🚀 Grid-X Hybrid Worker-Client")
         print(f"   User: {user_id}")
         print(f"   Coordinator HTTP: {self.coordinator_http}")
@@ -190,7 +193,21 @@ class HybridWorker:
             return response.status_code in [200, 201]
         except Exception:
             return False
-    
+
+    def pause(self) -> None:
+        """Pause accepting jobs - worker will disconnect and not reconnect until resume()."""
+        self._paused = True
+        self.activity_log.add_entry("Paused", "Worker paused by user")
+
+    def resume(self) -> None:
+        """Resume accepting jobs - worker will reconnect to coordinator."""
+        self._paused = False
+        self.activity_log.add_entry("Resumed", "Worker resumed by user")
+
+    def is_paused(self) -> bool:
+        """Return whether worker is currently paused."""
+        return self._paused
+
     async def run_worker(self):
         """Run the worker loop - connects to coordinator and executes jobs."""
         try:
@@ -244,6 +261,12 @@ class HybridWorker:
             
             while True:
                 try:
+                    # When paused, disconnect (by not connecting) and wait
+                    if self._paused:
+                        self.is_connected = False
+                        await asyncio.sleep(1)
+                        continue
+
                     # Check if coordinator is reachable before connecting
                     if not self._check_coordinator_connection():
                         self.is_connected = False
@@ -328,6 +351,17 @@ class HybridWorker:
 
                             hb_task = asyncio.create_task(_hb_loop(ws))
 
+                            # Pause watcher: when user pauses, close ws to exit message loop
+                            async def _watch_pause(w):
+                                while not self._paused:
+                                    await asyncio.sleep(0.5)
+                                try:
+                                    await w.close()
+                                except Exception:
+                                    pass
+
+                            pause_watcher = asyncio.create_task(_watch_pause(ws))
+
                             # Handle messages
                             async for raw in ws:
                                 try:
@@ -357,10 +391,16 @@ class HybridWorker:
                                     await handle_assign_job(msg, ws, executor, task_queue)
                                     self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
 
-                            # Ensure heartbeat task is cancelled when websocket context exits
+                                # Check if paused (watcher will close ws, this is redundant but explicit)
+                                if self._paused:
+                                    break
+
+                            # Ensure heartbeat and pause watcher are cancelled when websocket context exits
                             try:
                                 if 'hb_task' in locals() and hb_task is not None:
                                     hb_task.cancel()
+                                if 'pause_watcher' in locals() and pause_watcher is not None:
+                                    pause_watcher.cancel()
                             except Exception:
                                 pass
                         else:
@@ -419,7 +459,12 @@ class HybridWorker:
             self.activity_log.add_entry("Fatal Error", f"{type(e).__name__}: {str(e)[:50]}")
     
     # Client functionality methods
-    def submit_job(self, code: str, wait_for_result: bool = True) -> Optional[str]:
+    def submit_job(
+        self,
+        code: str,
+        language: str = "python",
+        wait_for_result: bool = True,
+    ) -> Optional[str]:
         """Submit a job as a client."""
         
         # Check connection status first
@@ -435,7 +480,7 @@ class HybridWorker:
                 json={
                     "user_id": self.user_id,
                     "code": code,
-                    "language": "python"
+                    "language": language or "python",
                 },
                 timeout=10
             )
@@ -555,8 +600,8 @@ class HybridWorker:
         print(f"   The job may still be executing on a remote worker")
         print(f"   Check status with: GET /jobs/{job_id}")
     
-    def check_credits(self):
-        """Check and display credit balance."""
+    def get_credits(self) -> Optional[float]:
+        """Get credit balance. Returns balance or None on error."""
         try:
             response = requests.get(
                 f"{self.coordinator_http}/credits/{self.user_id}",
@@ -564,15 +609,45 @@ class HybridWorker:
             )
             response.raise_for_status()
             data = response.json()
-            balance = data['balance']
-            
+            return float(data.get('balance', 0))
+        except Exception:
+            return None
+
+    def get_job(self, job_id: str) -> Optional[dict]:
+        """Get job details by ID. Returns dict or None on error."""
+        try:
+            response = requests.get(
+                f"{self.coordinator_http}/jobs/{job_id}",
+                timeout=10
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception:
+            return None
+
+    def list_jobs(self, limit: int = 50) -> list:
+        """List recent jobs for this user. Returns list of job dicts or [] on error."""
+        try:
+            response = requests.get(
+                f"{self.coordinator_http}/jobs",
+                params={"user_id": self.user_id, "limit": limit},
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def check_credits(self):
+        """Check and display credit balance."""
+        balance = self.get_credits()
+        if balance is not None:
             print(f"💰 Balance: {balance:.2f} credits")
-            
             if balance < 1.0:
                 print(f"⚠️  Low balance! Keep your worker running to earn more.")
-            
-        except Exception as e:
-            print(f"❌ Error checking credits: {e}")
+        else:
+            print("❌ Error checking credits")
     
     def list_workers(self):
         """List all registered workers in the network."""

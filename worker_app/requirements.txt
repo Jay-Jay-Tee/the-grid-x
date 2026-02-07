@@ -1,0 +1,9 @@
+# Grid-X Worker App - Desktop UI dependencies
+customtkinter>=5.2.0
+# Worker dependencies (from worker/requirements.txt)
+docker>=7.0.0
+websockets>=12.0
+psutil>=5.9.0
+requests>=2.31.0
+# Optional: GPU metrics - install separately if needed; worker works without it
+nvidia-ml-py>=12.0.0

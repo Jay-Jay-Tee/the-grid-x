@@ -205,6 +205,18 @@ def db_get_job(job_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def db_list_jobs_by_user(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """List jobs for a user, most recent first."""
+    if not user_id:
+        return []
+    user_id = sanitize_string(user_id, max_length=64)
+    rows = get_db().execute(
+        "SELECT * FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+        (user_id, limit)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def db_update_job_status(
     job_id: str,
     status: str,
