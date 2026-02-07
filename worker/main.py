@@ -243,20 +243,20 @@ class HybridWorker:
             max_reconnect_delay = 60
             
             while True:
-            try:
-                # Check if coordinator is reachable before connecting
-                if not self._check_coordinator_connection():
-                    self.is_connected = False
-                    self.connection_attempts += 1
-                    
-                    if self.connection_attempts == 1:
-                        print(f"❌ Cannot reach coordinator at {self.coordinator_http}")
-                        print(f"   Retrying every {reconnect_delay}s...")
-                        self.activity_log.add_entry("Connection Failed", "Coordinator unreachable")
-                    
-                    await asyncio.sleep(reconnect_delay)
-                    reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
-                    continue
+                try:
+                    # Check if coordinator is reachable before connecting
+                    if not self._check_coordinator_connection():
+                        self.is_connected = False
+                        self.connection_attempts += 1
+                        
+                        if self.connection_attempts == 1:
+                            print(f"❌ Cannot reach coordinator at {self.coordinator_http}")
+                            print(f"   Retrying every {reconnect_delay}s...")
+                            self.activity_log.add_entry("Connection Failed", "Coordinator unreachable")
+                        
+                        await asyncio.sleep(reconnect_delay)
+                        reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+                        continue
                 
                 # Reset reconnect delay on successful ping
                 reconnect_delay = 5
