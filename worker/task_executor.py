@@ -8,8 +8,8 @@ import tempfile
 import shutil
 import logging
 from typing import Dict, Callable, List
-from task_queue import Task, TaskQueue
-from docker_manager import DockerManager, ContainerConfig
+from .task_queue import Task, TaskQueue
+from .docker_manager import DockerManager, ContainerConfig
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -287,8 +287,8 @@ class TaskExecutor:
 if __name__ == '__main__':
     # Test task executor
     async def test():
-        from docker_manager import DockerManager
-        from task_queue import TaskQueue, TaskPriority
+        from .docker_manager import DockerManager
+        from .task_queue import TaskQueue, TaskPriority
         
         docker_manager = DockerManager()
         task_queue = TaskQueue()

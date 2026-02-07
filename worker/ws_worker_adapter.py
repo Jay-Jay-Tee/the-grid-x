@@ -1,8 +1,8 @@
 # ws_worker_adapter.py
 import asyncio
 import json
-from task_queue import Task, TaskQueue, TaskPriority, TaskStatus
-from task_executor import TaskExecutor
+from .task_queue import Task, TaskQueue, TaskPriority, TaskStatus
+from .task_executor import TaskExecutor
 
 async def handle_assign_job(msg, ws, executor: TaskExecutor, queue: TaskQueue):
     """Enqueue the job and monitor completion, sending result back over the websocket.

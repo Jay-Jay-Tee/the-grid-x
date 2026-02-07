@@ -26,12 +26,13 @@ import time
 
 import websockets
 import requests
+from websockets import exceptions as ws_exceptions
 
-from docker_manager import DockerManager
-from task_queue import TaskQueue
-from task_executor import TaskExecutor
-from ws_worker_adapter import handle_assign_job
-from resource_monitor import ResourceMonitor
+from .docker_manager import DockerManager
+from .task_queue import TaskQueue
+from .task_executor import TaskExecutor
+from .ws_worker_adapter import handle_assign_job
+from .resource_monitor import ResourceMonitor
 
 
 class WorkerIdentity:
@@ -325,7 +326,7 @@ class HybridWorker:
                         self.activity_log.add_entry("Auth Failed", "Invalid credentials")
                         await asyncio.sleep(30)
                         
-            except websockets.exceptions.ConnectionClosed as e:
+            except ws_exceptions.ConnectionClosed as e:
                 self.is_connected = False
                 if self.connection_attempts == 0:
                     print(f"⚠️  Disconnected from coordinator. Reconnecting...")
