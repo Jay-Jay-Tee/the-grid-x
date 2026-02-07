@@ -11,13 +11,13 @@ from typing import Optional
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from database import (
+from .database import (
     db_init, db_set_worker_offline, db_set_worker_status, 
     db_upsert_worker, db_get_worker_by_auth, db_verify_worker_auth, 
     db_verify_user_auth, now
 )
-from workers import lock, register_worker_ws, unregister_worker_ws, update_worker_last_seen
-from scheduler import dispatch, job_queue, on_job_started, on_job_result
+from .workers import lock, register_worker_ws, unregister_worker_ws, update_worker_last_seen
+from .scheduler import dispatch, job_queue, on_job_started, on_job_result
 
 
 async def handle_worker(ws: WebSocketServerProtocol) -> None:

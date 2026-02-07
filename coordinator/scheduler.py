@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any, Dict, Optional
 
-from database import (
+from .database import (
     get_db,
     db_get_job,
     db_set_job_assigned,
@@ -15,7 +15,7 @@ from database import (
     db_set_worker_status,
     db_get_worker,
 )
-from workers import (
+from .workers import (
     get_idle_worker_id,
     get_worker_ws,
     lock,
@@ -23,7 +23,7 @@ from workers import (
     set_worker_idle,
     unregister_worker_ws,
 )
-from credit_manager import credit, get_worker_reward
+from .credit_manager import credit, get_worker_reward
 
 # Job queue: job_id strings
 job_queue: asyncio.Queue[str] = asyncio.Queue()

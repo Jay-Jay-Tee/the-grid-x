@@ -178,3 +178,4 @@ Write-Host ""
 
 Push-Location $ProjectRoot
 python -m worker.main --user $UserId --coordinator-ip $CoordinatorIp --http-port $HttpPort --ws-port $WsPort
+Pop-Location

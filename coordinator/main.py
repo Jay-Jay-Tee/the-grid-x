@@ -13,12 +13,12 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import db_get_job, db_list_workers, get_db, now, db_create_job, db_upsert_worker
-from credit_manager import ensure_user, get_balance, deduct, get_job_cost
-from scheduler import job_queue, dispatch
+from .database import db_get_job, db_list_workers, get_db, now, db_create_job, db_upsert_worker
+from .credit_manager import ensure_user, get_balance, deduct, get_job_cost
+from .scheduler import job_queue, dispatch
 
 # Import so WS server runs
-from websocket import run_ws
+from .websocket import run_ws
 
 app = FastAPI(
     title="Grid-X Coordinator",
