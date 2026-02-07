@@ -1,14 +1,13 @@
 #!/bin/bash
 
 ###############################################################################
-# Grid-X Coordinator Setup Script (Linux/macOS)
+# Grid-X Worker Setup Script (Linux/macOS)
 # 
 # This script:
 # 1. Checks prerequisites (Python, Docker, pip)
 # 2. Creates and activates a Python virtual environment
 # 3. Installs Python dependencies
-# 4. Initializes the database
-# 5. Starts the coordinator server
+# 4. Starts the worker
 ###############################################################################
 
 set -e  # Exit on first error
@@ -17,13 +16,14 @@ set -e  # Exit on first error
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
-echo -e "${GREEN}=== Grid-X Coordinator Setup ===${NC}\n"
+echo -e "${GREEN}=== Grid-X Worker Setup ===${NC}\n"
 
 ###############################################################################
 # Check Prerequisites
@@ -91,12 +91,12 @@ echo -e "${YELLOW}Installing Python dependencies...${NC}"
 # Upgrade pip
 pip install --quiet --upgrade pip setuptools wheel
 
-# Install coordinator requirements
-if [ -f "$PROJECT_ROOT/coordinator/requirements.txt" ]; then
-    pip install --quiet -r "$PROJECT_ROOT/coordinator/requirements.txt"
-    echo -e "${GREEN}✓ Coordinator dependencies installed${NC}"
+# Install worker requirements
+if [ -f "$PROJECT_ROOT/worker/requirements.txt" ]; then
+    pip install --quiet -r "$PROJECT_ROOT/worker/requirements.txt"
+    echo -e "${GREEN}✓ Worker dependencies installed${NC}"
 else
-    echo -e "${RED}✗ Cannot find coordinator/requirements.txt${NC}"
+    echo -e "${RED}✗ Cannot find worker/requirements.txt${NC}"
     exit 1
 fi
 
@@ -124,33 +124,40 @@ fi
 echo ""
 
 ###############################################################################
-# Initialize Database
+# Get User ID
 ###############################################################################
 
-echo -e "${YELLOW}Initializing database...${NC}"
+echo -e "${BLUE}Worker Configuration:${NC}"
+read -p "Enter your user ID (name to earn credits with): " USER_ID
+
+if [ -z "$USER_ID" ]; then
+    echo -e "${RED}Error: User ID is required${NC}"
+    exit 1
+fi
+
+read -p "Enter coordinator IP/hostname [localhost]: " COORDINATOR_IP
+COORDINATOR_IP=${COORDINATOR_IP:-localhost}
+
+read -p "Enter coordinator HTTP port [8081]: " HTTP_PORT
+HTTP_PORT=${HTTP_PORT:-8081}
+
+read -p "Enter coordinator WebSocket port [8080]: " WS_PORT
+WS_PORT=${WS_PORT:-8080}
+
+echo ""
+
+###############################################################################
+# Start Worker
+###############################################################################
+
+echo -e "${GREEN}=== Starting Grid-X Worker ===${NC}\n"
+echo -e "${BLUE}Configuration:${NC}"
+echo "  User ID: $USER_ID"
+echo "  Coordinator: $COORDINATOR_IP"
+echo "  HTTP Port: $HTTP_PORT"
+echo "  WebSocket Port: $WS_PORT"
+echo ""
+echo -e "${YELLOW}Press Ctrl+C to stop the worker${NC}\n"
 
 cd "$PROJECT_ROOT"
-python3 << 'EOF'
-import sys
-sys.path.insert(0, '.')
-from coordinator.database import db_init
-db_init()
-print("✓ Database initialized")
-EOF
-
-echo ""
-
-###############################################################################
-# Start Coordinator
-###############################################################################
-
-echo -e "${GREEN}=== Starting Grid-X Coordinator ===${NC}\n"
-echo "Coordinator HTTP API: http://localhost:8081"
-echo "WebSocket Server: ws://localhost:8080"
-echo ""
-echo "API Docs: http://localhost:8081/docs"
-echo ""
-echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}\n"
-
-cd "$PROJECT_ROOT"
-python3 -m coordinator.main
+python3 -m worker.main --user "$USER_ID" --coordinator-ip "$COORDINATOR_IP" --http-port "$HTTP_PORT" --ws-port "$WS_PORT"
