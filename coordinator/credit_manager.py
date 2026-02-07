@@ -30,7 +30,7 @@ def ensure_user(user_id: str, initial_balance: Optional[float] = None) -> float:
     if row is not None:
         return float(row[0])
     DB.execute(
-        "INSERT INTO user_credits(user_id, balance, updated_at) VALUES(?,?,?)",
+        "INSERT INTO user_credits(user_id, balance, last_updated) VALUES(?,?,?)",
         (user_id, initial_balance, now()),
     )
     DB.commit()
@@ -55,7 +55,7 @@ def deduct(user_id: str, amount: float) -> bool:
         return True
     DB = get_db()
     cur = DB.execute(
-        "UPDATE user_credits SET balance=balance-?, updated_at=? WHERE user_id=? AND balance>=?",
+        "UPDATE user_credits SET balance=balance-?, last_updated=? WHERE user_id=? AND balance>=?",
         (amount, now(), user_id, amount),
     )
     DB.commit()
@@ -69,7 +69,7 @@ def credit(user_id: str, amount: float) -> None:
     DB = get_db()
     ensure_user(user_id, initial_balance=0.0)
     DB.execute(
-        "UPDATE user_credits SET balance=balance+?, updated_at=? WHERE user_id=?",
+        "UPDATE user_credits SET balance=balance+?, last_updated=? WHERE user_id=?",
         (amount, now(), user_id),
     )
     DB.commit()
