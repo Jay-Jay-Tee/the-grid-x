@@ -66,7 +66,6 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                                 print(f"✓ New worker {worker_id[:12]}... registered (owner: {owner_id})")
                         else:
                             # Check if this owner_id exists in the database with different credentials
-                            from .database import get_db
                             existing_user = get_db().execute(
                                 "SELECT user_id FROM user_auth WHERE user_id=?", (owner_id,)
                             ).fetchone()
@@ -136,7 +135,9 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                 print(f"❌ Error handling message from worker {worker_id or 'unknown'}: {e}")
                 import traceback
                 traceback.print_exc()
-                raise
+                # Don't re-raise ConnectionClosedOK - just exit loop
+                if not isinstance(e, websockets.exceptions.ConnectionClosedOK):
+                    raise
 
     except websockets.exceptions.ConnectionClosed:
         pass
