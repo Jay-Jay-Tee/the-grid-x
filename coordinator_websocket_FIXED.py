@@ -107,7 +107,7 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
 
                 # Register worker
                 async with lock:
-                    register_worker_ws(worker_id, ws, caps)
+                    register_worker_ws(worker_id, ws, caps, owner_id)
 
                 db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
 

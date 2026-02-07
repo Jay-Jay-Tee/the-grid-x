@@ -97,11 +97,6 @@ async def dispatch() -> None:
     try:
         async with lock:
             while not job_queue.empty():
-                idle_id: Optional[str] = get_idle_worker_id()
-                if idle_id is None:
-                    logger.warning(f"dispatch: No idle worker available. Queue size: {job_queue.qsize()}")
-                    return
-
                 try:
                     job_id = job_queue.get_nowait()
                 except asyncio.QueueEmpty:
@@ -111,6 +106,18 @@ async def dispatch() -> None:
                 if not job_row:
                     logger.warning(f"dispatch: Job {job_id} not found in DB")
                     continue
+
+                # Prefer an idle worker that is NOT owned by the job submitter
+                owner_to_exclude = (job_row.get("user_id") or "").strip()
+                idle_id: Optional[str] = get_idle_worker_id(exclude_owner=owner_to_exclude)
+                if idle_id is None:
+                    logger.warning(f"dispatch: No idle worker available (excluding owner={owner_to_exclude}). Queue size: {job_queue.qsize()}")
+                    # Put job back to queue head by re-adding and return
+                    try:
+                        await job_queue.put(job_id)
+                    except Exception:
+                        pass
+                    return
 
                 logger.info(f"dispatch: Assigning job {job_id} to worker {idle_id}")
                 set_worker_busy(idle_id)

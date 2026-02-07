@@ -12,18 +12,25 @@ workers_ws: Dict[str, Dict[str, Any]] = {}
 lock = asyncio.Lock()
 
 
-def get_idle_worker_id() -> Optional[str]:
-    """Return first idle connected worker id."""
+def get_idle_worker_id(exclude_owner: Optional[str] = None) -> Optional[str]:
+    """Return first idle connected worker id.
+
+    If `exclude_owner` is provided, skip workers whose `owner_id` matches it.
+    """
     import logging
     logger = logging.getLogger(__name__)
-    
+
     logger.debug(f"get_idle_worker_id: checking {len(workers_ws)} workers in registry")
     for wid, w in workers_ws.items():
         # Only consider workers that report they can execute tasks
         caps = w.get("caps") or {}
         can_execute = caps.get("can_execute", True)
         status = w.get("status")
-        logger.debug(f"  Worker {wid[:12]}...: status={status}, can_execute={can_execute}, caps={caps}")
+        owner = w.get("owner_id")
+        logger.debug(f"  Worker {wid[:12]}...: status={status}, can_execute={can_execute}, owner={owner}, caps={caps}")
+        if exclude_owner and owner and owner == exclude_owner:
+            logger.debug(f"  → Skipping worker {wid[:12]}... (owner excluded)")
+            continue
         if status == "idle" and can_execute:
             logger.debug(f"  → Selected worker {wid[:12]}...")
             return wid
@@ -43,12 +50,13 @@ def set_worker_idle(worker_id: str) -> None:
         workers_ws[worker_id]["last_seen"] = now()
 
 
-def register_worker_ws(worker_id: str, ws: Any, caps: Dict[str, Any]) -> None:
+def register_worker_ws(worker_id: str, ws: Any, caps: Dict[str, Any], owner_id: str = "") -> None:
     workers_ws[worker_id] = {
         "ws": ws,
         "caps": caps,
         "status": "idle",
         "last_seen": now(),
+        "owner_id": owner_id,
     }
 
 

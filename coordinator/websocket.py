@@ -89,7 +89,7 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                     print(f"⚠️  Worker {worker_id[:12]}... connected without authentication")
 
                 async with lock:
-                    register_worker_ws(worker_id, ws, caps)
+                    register_worker_ws(worker_id, ws, caps, owner_id)
 
                 db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id)
 
