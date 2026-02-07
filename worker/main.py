@@ -264,20 +264,31 @@ class HybridWorker:
                     self.coordinator_ws,
                     ping_interval=20,
                     ping_timeout=20,
-                    close_timeout=5,
+                    close_timeout=15,
                 ) as ws:
                     # Send hello with authentication
-                    await ws.send(json.dumps({
-                        "type": "hello",
-                        "worker_id": worker_id,
-                        "owner_id": self.user_id,
-                        "auth_token": auth_token,
-                        "caps": caps,
-                    }))
-                    
-                    # Wait for acknowledgment
-                    ack_msg = await asyncio.wait_for(ws.recv(), timeout=10)
-                    ack = json.loads(ack_msg)
+                    try:
+                        await ws.send(json.dumps({
+                            "type": "hello",
+                            "worker_id": worker_id,
+                            "owner_id": self.user_id,
+                            "auth_token": auth_token,
+                            "caps": caps,
+                        }))
+                        
+                        # Wait for acknowledgment (increased timeout to allow coordinator more time)
+                        ack_msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                        ack = json.loads(ack_msg)
+                    except asyncio.TimeoutError:
+                        print(f"⚠️  Handshake timeout - coordinator not responding within 30 seconds")
+                        self.activity_log.add_entry("Timeout", "Handshake timeout with coordinator")
+                        await asyncio.sleep(reconnect_delay)
+                        continue
+                    except Exception as e:
+                        print(f"⚠️  Error during handshake: {e}")
+                        self.activity_log.add_entry("Handshake Error", str(e)[:50])
+                        await asyncio.sleep(reconnect_delay)
+                        continue
                     
                     # Check for authentication error
                     if ack.get("type") == "auth_error":
@@ -344,15 +355,16 @@ class HybridWorker:
                                 
                                 await handle_assign_job(msg, ws, executor, task_queue)
                                 self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
-                    # Ensure heartbeat task is cancelled when websocket context exits
-                    try:
-                        if 'hb_task' in locals() and hb_task is not None:
-                            hb_task.cancel()
-                    except Exception:
-                        pass
+                        
+                        # Ensure heartbeat task is cancelled when websocket context exits
+                        try:
+                            if 'hb_task' in locals() and hb_task is not None:
+                                hb_task.cancel()
+                        except Exception:
+                            pass
                     else:
-                        print(f"❌ Authentication failed - check your password")
-                        self.activity_log.add_entry("Auth Failed", "Invalid credentials")
+                        print(f"❌ Invalid response from coordinator during handshake: {ack.get('type')}")
+                        self.activity_log.add_entry("Handshake Error", f"Invalid response: {ack.get('type')}")
                         await asyncio.sleep(30)
                         
             except ws_exceptions.ConnectionClosed as e:

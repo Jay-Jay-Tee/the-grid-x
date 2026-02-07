@@ -93,7 +93,18 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
 
                     db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
 
-                    await ws.send(json.dumps({"type": "hello_ack", "worker_id": worker_id}))
+                    try:
+                        await ws.send(json.dumps({"type": "hello_ack", "worker_id": worker_id}))
+                    except websockets.exceptions.ConnectionClosedOK:
+                        # Worker closed connection before we could send hello_ack
+                        # This is a race condition - worker likely timed out waiting
+                        print(f"⚠️  Worker {worker_id[:12]}... closed connection during handshake (timeout?)")
+                        return
+                    except websockets.exceptions.ConnectionClosed as e:
+                        # Connection was closed unexpectedly
+                        print(f"⚠️  Worker {worker_id[:12]}... connection closed: {e}")
+                        return
+                    
                     await dispatch()
                     continue
 
