@@ -24,6 +24,9 @@ from .workers import (
     unregister_worker_ws,
 )
 from .credit_manager import credit, get_worker_reward
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Job queue: job_id strings
 job_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -48,6 +51,14 @@ async def watchdog_loop(check_interval: int = 15, heartbeat_timeout: int = 30) -
                 if not worker_id:
                     continue
 
+                # If worker has an active in-memory websocket, skip (it's connected)
+                try:
+                    ws = get_worker_ws(worker_id)
+                    if ws:
+                        continue
+                except Exception:
+                    pass
+
                 w = conn.execute("SELECT last_heartbeat FROM workers WHERE id=?", (worker_id,)).fetchone()
                 last = w["last_heartbeat"] if w else None
 
@@ -68,6 +79,7 @@ async def watchdog_loop(check_interval: int = 15, heartbeat_timeout: int = 30) -
                             await job_queue.put(job_id)
                         except Exception:
                             pass
+                        logger.info(f"Watchdog requeued job {job_id} from worker {worker_id}")
                     except Exception:
                         conn.rollback()
 

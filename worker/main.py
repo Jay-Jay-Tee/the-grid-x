@@ -445,12 +445,17 @@ class HybridWorker:
         """Poll job status until completion."""
         import time
         print(f"⏳ Waiting for job {job_id}...")
-        
-        max_retries = 300  # 300 * 2 seconds = 10 minutes timeout
-        retry_count = 0
+        # Use time-based polling with exponential backoff on errors to avoid
+        # noisy logs when the coordinator is temporarily unreachable.
+        timeout_seconds = 60 * 10  # 10 minutes
+        start = time.time()
         last_status = "queued"
-        
-        while retry_count < max_retries:
+
+        backoff = 2.0
+        max_backoff = 30.0
+        consecutive_errors = 0
+
+        while time.time() - start < timeout_seconds:
             try:
                 response = requests.get(
                     f"{self.coordinator_http}/jobs/{job_id}",
@@ -458,40 +463,63 @@ class HybridWorker:
                 )
                 response.raise_for_status()
                 job = response.json()
-                
-                status = job["status"]
-                
+
+                # Reset error/backoff state on success
+                consecutive_errors = 0
+                backoff = 2.0
+
+                status = job.get("status")
+
                 # Report status change
                 if status != last_status:
                     print(f"📊 Job status: {status}")
                     last_status = status
-                
+
                 if status in ["completed", "failed", "error"]:
                     print(f"\n{'='*60}")
                     print(f"✅ Job {status.upper()}")
                     print(f"{'='*60}")
-                    
+
                     if job.get('stdout'):
                         print(f"📤 Output:\n{job['stdout']}")
                     if job.get('stderr'):
                         print(f"❌ Errors:\n{job['stderr']}")
-                    if job.get('exit_code'):
+                    if job.get('exit_code') is not None:
                         print(f"Exit code: {job['exit_code']}")
                     print(f"{'='*60}\n")
-                    break
-                
+                    return
+
+                # Regular polling interval when coordinator is reachable
                 time.sleep(2)
-                retry_count += 1
-                
+
+            except requests.exceptions.RequestException as e:
+                # First error: show a clear warning. Subsequent errors: quieter,
+                # but still inform occasionally to indicate continued problems.
+                consecutive_errors += 1
+                if consecutive_errors == 1:
+                    print(f"⚠️  Error checking job: {e} — will retry with backoff")
+                elif consecutive_errors % 5 == 0:
+                    print(f"⚠️  Still having issues checking job (attempt #{consecutive_errors}): {e}")
+
+                # Sleep with exponential backoff and small jitter
+                sleep_time = backoff + (0.1 * (os.getpid() % 5))
+                time.sleep(sleep_time)
+                backoff = min(backoff * 1.5, max_backoff)
+
             except Exception as e:
-                print(f"⚠️  Error checking job: {e}")
-                retry_count += 1
-                time.sleep(2)
-        
-        if retry_count >= max_retries:
-            print(f"\n❌ Job polling timeout after 10 minutes")
-            print(f"   The job may still be executing on a remote worker")
-            print(f"   Check status with: GET /jobs/{job_id}")
+                # Catch-all for unexpected errors
+                consecutive_errors += 1
+                if consecutive_errors == 1:
+                    print(f"⚠️  Unexpected error checking job: {e}")
+                elif consecutive_errors % 5 == 0:
+                    print(f"⚠️  Repeated unexpected errors (#{consecutive_errors}): {e}")
+                time.sleep(min(backoff, max_backoff))
+                backoff = min(backoff * 1.5, max_backoff)
+
+        # Timeout expired
+        print(f"\n❌ Job polling timeout after {timeout_seconds//60} minutes")
+        print(f"   The job may still be executing on a remote worker")
+        print(f"   Check status with: GET /jobs/{job_id}")
     
     def check_credits(self):
         """Check and display credit balance."""
