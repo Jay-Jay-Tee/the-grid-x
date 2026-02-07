@@ -120,7 +120,7 @@
 
     <section class="grid" id="stats">
       <div class="card">
-        <div class="stat-title">Active Workers</div>
+        <div class="stat-title">Connected Workers</div>
         <div class="stat-value" id="stat-active-workers">--</div>
       </div>
       <div class="card">
@@ -214,7 +214,8 @@
 
         // Stats
         document.getElementById('timestamp').textContent = `Updated ${new Date().toLocaleTimeString()}`;
-        document.getElementById('stat-active-workers').textContent = data.workers?.length ?? 0;
+        const connected = new Set(data.connected_worker_ids || []);
+        document.getElementById('stat-active-workers').textContent = connected.size;
         document.getElementById('stat-running').textContent = data.jobs?.running?.length ?? 0;
         document.getElementById('stat-queued').textContent = data.jobs?.queued?.length ?? 0;
         document.getElementById('stat-users').textContent = data.users?.length ?? 0;
@@ -259,7 +260,6 @@
         );
 
         // Workers
-        const connected = new Set(data.connected_worker_ids || []);
         renderTable(
           document.getElementById('workers'),
           data.workers || [],
