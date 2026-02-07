@@ -101,6 +101,12 @@
     button:hover { border-color: var(--accent); color: var(--accent); }
 .disconnect { color: var(--error); border-color: rgba(255,107,107,0.4); }
 .disconnect:hover { color: #fff; background: rgba(255,107,107,0.18); border-color: var(--error); }
+.ban { color: var(--error); border-color: rgba(255,107,107,0.5); }
+.ban:hover { color: #fff; background: rgba(255,107,107,0.2); }
+.suspend { color: var(--warn); border-color: rgba(255,179,71,0.5); }
+.suspend:hover { color: #fff; background: rgba(255,179,71,0.15); }
+.unsuspend { color: var(--accent); border-color: rgba(110,243,165,0.5); }
+.unsuspend:hover { color: #fff; background: rgba(110,243,165,0.15); }
 .broadcast-btn { color: var(--accent); border-color: rgba(110,243,165,0.5); }
 .broadcast-btn:hover { color: #fff; background: rgba(110,243,165,0.15); border-color: var(--accent); }
     .subtitle { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
@@ -152,6 +158,11 @@
     <section>
       <h3 class="section-title">Recent Jobs</h3>
       <div class="card" id="recent-jobs"></div>
+    </section>
+
+    <section>
+      <h3 class="section-title">Recently Completed Jobs</h3>
+      <div class="card" id="recently-completed-jobs"></div>
     </section>
 
     <section>
@@ -218,6 +229,40 @@
         await loadData();
       } catch (err) {
         alert('Failed to disconnect: ' + err);
+      }
+    };
+
+    const banWorker = async (id) => {
+      if (!id) return;
+      if (!confirm('Permanently ban this worker? It will be disconnected and cannot reconnect.')) return;
+      try {
+        const res = await fetch(`/admin/workers/${id}/ban`, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        await loadData();
+      } catch (err) {
+        alert('Failed to ban: ' + err);
+      }
+    };
+
+    const suspendWorker = async (id) => {
+      if (!id) return;
+      try {
+        const res = await fetch(`/admin/workers/${id}/suspend`, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        await loadData();
+      } catch (err) {
+        alert('Failed to suspend: ' + err);
+      }
+    };
+
+    const unsuspendWorker = async (id) => {
+      if (!id) return;
+      try {
+        const res = await fetch(`/admin/workers/${id}/unsuspend`, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        await loadData();
+      } catch (err) {
+        alert('Failed to unsuspend: ' + err);
       }
     };
 
@@ -289,10 +334,10 @@
           ]
         );
 
-        // Recent jobs
+        // Recent jobs (capped to 5)
         renderTable(
           document.getElementById('recent-jobs'),
-          (data.jobs?.recent || []).slice(0, 20),
+          (data.jobs?.recent || []).slice(0, 5),
           [
             { key: 'id', label: 'Job', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
             { key: 'user_id', label: 'Submitted By' },
@@ -302,7 +347,45 @@
           ]
         );
 
+        // Recently completed jobs
+        renderTable(
+          document.getElementById('recently-completed-jobs'),
+          data.jobs?.recently_completed || [],
+          [
+            { key: 'id', label: 'Job', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
+            { key: 'user_id', label: 'Submitted By' },
+            { key: 'status', label: 'Status', render: r => badge(r.status) },
+            { key: 'worker_id', label: 'Worker', render: r => `<span class="mono">${fmtId(r.worker_id)}</span>` },
+            { key: 'worker_owner', label: 'Worker Owner' },
+            { key: 'completed_at', label: 'Completed', render: r => fmtTs(r.completed_at) },
+          ]
+        );
+
         // Workers
+        const renderWorkerActions = (r) => {
+          const res = r.restriction;
+          const isConnected = connected.has(r.id);
+          const parts = [];
+          if (res !== 'banned') {
+            if (isConnected) {
+              parts.push(`<button class="disconnect" onclick="disconnectWorker('${r.id}')">Disconnect</button>`);
+              if (res !== 'suspended') {
+                parts.push(`<button class="ban" onclick="banWorker('${r.id}')">Ban</button>`);
+                parts.push(`<button class="suspend" onclick="suspendWorker('${r.id}')">Suspend</button>`);
+              } else {
+                parts.push(`<button class="unsuspend" onclick="unsuspendWorker('${r.id}')">Unsuspend</button>`);
+              }
+            } else {
+              if (res === 'suspended') {
+                parts.push(`<button class="unsuspend" onclick="unsuspendWorker('${r.id}')">Unsuspend</button>`);
+              } else {
+                parts.push(`<button class="ban" onclick="banWorker('${r.id}')">Ban</button>`);
+                parts.push(`<button class="suspend" onclick="suspendWorker('${r.id}')">Suspend</button>`);
+              }
+            }
+          }
+          return parts.length ? parts.join(' ') : (res === 'banned' ? '<span class="muted">Banned</span>' : '<span class="muted">Offline</span>');
+        };
         renderTable(
           document.getElementById('workers'),
           data.workers || [],
@@ -310,11 +393,10 @@
             { key: 'id', label: 'Worker', render: r => `<span class="mono">${fmtId(r.id)}</span>` },
             { key: 'owner_id', label: 'Owner' },
             { key: 'status', label: 'Status', render: r => badge(r.status) },
+            { key: 'restriction', label: 'Restriction', render: r => r.restriction ? `<span class="badge ${r.restriction === 'banned' ? 'failed' : 'queued'}">${r.restriction}</span>` : '—' },
             { key: 'ip', label: 'IP' },
             { key: 'last_heartbeat', label: 'Last Seen', render: r => fmtTs(r.last_heartbeat) },
-            { key: 'actions', label: 'Actions', render: r => connected.has(r.id)
-              ? `<button class="disconnect" onclick="disconnectWorker('${r.id}')">Disconnect</button>`
-              : '<span class="muted">Offline</span>' },
+            { key: 'actions', label: 'Actions', render: renderWorkerActions },
           ]
         );
 

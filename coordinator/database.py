@@ -155,6 +155,17 @@ def init_db() -> None:
             logger.info("Added duration_seconds to jobs")
     except Exception as e:
         logger.debug(f"Migration duration_seconds: {e}")
+
+    # Migration: add restriction to workers (banned/suspended)
+    try:
+        cur = conn.execute("PRAGMA table_info(workers)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "restriction" not in cols:
+            conn.execute("ALTER TABLE workers ADD COLUMN restriction TEXT")
+            conn.commit()
+            logger.info("Added restriction column to workers")
+    except Exception as e:
+        logger.debug(f"Migration workers restriction: {e}")
     
     conn.commit()
     logger.info("Database schema initialized")
@@ -235,6 +246,23 @@ def db_list_recent_jobs(limit: int = 100) -> List[Dict[str, Any]]:
     rows = get_db().execute(
         "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
         (limit,)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def db_list_recently_completed_jobs(limit: int = 20) -> List[Dict[str, Any]]:
+    """List recently completed jobs (status completed, most recent first)."""
+    limit = max(1, min(limit, 500))
+    rows = get_db().execute(
+        """
+        SELECT j.*, w.owner_id AS worker_owner
+        FROM jobs j
+        LEFT JOIN workers w ON j.worker_id = w.id
+        WHERE j.status = 'completed'
+        ORDER BY COALESCE(j.completed_at, j.created_at) DESC
+        LIMIT ?
+        """,
+        (limit,),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -539,6 +567,23 @@ def db_set_worker_offline(worker_id: str) -> None:
         conn.commit()
     except Exception as e:
         logger.error(f"db_set_worker_offline failed: {e}")
+
+
+def db_set_worker_restriction(worker_id: str, restriction: Optional[str]) -> bool:
+    """Set worker restriction: None, 'banned', or 'suspended'. Returns True if worker exists."""
+    try:
+        if not validate_uuid(worker_id):
+            return False
+        conn = get_db()
+        cur = conn.execute(
+            "UPDATE workers SET restriction=? WHERE id=?",
+            (restriction, worker_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.error(f"db_set_worker_restriction failed: {e}")
+        return False
 
 
 def db_get_worker_by_auth(owner_id: str, auth_token: str) -> Optional[Dict[str, Any]]:

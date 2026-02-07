@@ -13,7 +13,7 @@ from websockets.server import WebSocketServerProtocol
 
 from .database import (
     db_init, db_set_worker_offline, db_set_worker_status, 
-    db_upsert_worker, db_get_worker_by_auth, db_verify_worker_auth, 
+    db_upsert_worker, db_get_worker, db_get_worker_by_auth, db_verify_worker_auth, 
     db_verify_user_auth, now, get_db
 )
 from .workers import lock, register_worker_ws, unregister_worker_ws, update_worker_last_seen
@@ -87,6 +87,19 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                         # No auth token - backward compatibility (insecure)
                         worker_id = incoming_worker_id
                         print(f"⚠️  Worker {worker_id[:12]}... connected without authentication")
+
+                    # Reject banned or suspended workers
+                    existing = db_get_worker(worker_id)
+                    restriction = (existing or {}).get("restriction") if existing else None
+                    if restriction in ("banned", "suspended"):
+                        reason = "Worker is banned" if restriction == "banned" else "Worker is suspended"
+                        print(f"❌ Rejected {worker_id[:12]}...: {reason}")
+                        await ws.send(json.dumps({
+                            "type": "auth_error",
+                            "error": reason,
+                        }))
+                        await ws.close(code=4403, reason=reason)
+                        return
 
                     async with lock:
                         register_worker_ws(worker_id, ws, caps, owner_id=owner_id)

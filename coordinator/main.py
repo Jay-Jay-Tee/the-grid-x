@@ -46,14 +46,17 @@ from common.constants import (
 
 from coordinator.database import (
     db_get_job,
+    db_get_worker,
     db_list_jobs_by_user,
     db_list_workers,
     db_list_recent_jobs,
+    db_list_recently_completed_jobs,
     db_list_jobs_with_workers,
     db_list_users,
     get_db,
     db_create_job,
     db_upsert_worker,
+    db_set_worker_restriction,
     init_db
 )
 from coordinator.credit_manager import (
@@ -480,6 +483,7 @@ async def admin_overview(limit: int = 50) -> Dict[str, Any]:
     running_jobs = db_list_jobs_with_workers(["running"], limit)
     queued_jobs = db_list_jobs_with_workers(["queued"], limit)
     recent_jobs = db_list_recent_jobs(limit)
+    recently_completed_jobs = db_list_recently_completed_jobs(limit)
     users = db_list_users(200)
 
     return {
@@ -489,6 +493,7 @@ async def admin_overview(limit: int = 50) -> Dict[str, Any]:
             "running": running_jobs,
             "queued": queued_jobs,
             "recent": recent_jobs,
+            "recently_completed": recently_completed_jobs,
         },
         "users": users,
         "timestamp": now(),
@@ -506,6 +511,41 @@ async def admin_disconnect_worker(worker_id: str) -> Dict[str, Any]:
         raise HTTPException(HTTP_NOT_FOUND, "Worker not connected or already offline")
 
     return {"success": True, "worker_id": worker_id}
+
+
+@app.post("/admin/workers/{worker_id}/ban")
+async def admin_ban_worker(worker_id: str) -> Dict[str, Any]:
+    """Ban a worker - disconnect if connected and prevent future connections."""
+    if not validate_uuid(worker_id):
+        raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
+    if not db_get_worker(worker_id):
+        raise HTTPException(HTTP_NOT_FOUND, "Worker not found")
+    await disconnect_worker(worker_id)
+    db_set_worker_restriction(worker_id, "banned")
+    return {"success": True, "worker_id": worker_id, "restriction": "banned"}
+
+
+@app.post("/admin/workers/{worker_id}/suspend")
+async def admin_suspend_worker(worker_id: str) -> Dict[str, Any]:
+    """Suspend a worker - disconnect if connected and prevent connections until unsuspended."""
+    if not validate_uuid(worker_id):
+        raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
+    if not db_get_worker(worker_id):
+        raise HTTPException(HTTP_NOT_FOUND, "Worker not found")
+    await disconnect_worker(worker_id)
+    db_set_worker_restriction(worker_id, "suspended")
+    return {"success": True, "worker_id": worker_id, "restriction": "suspended"}
+
+
+@app.post("/admin/workers/{worker_id}/unsuspend")
+async def admin_unsuspend_worker(worker_id: str) -> Dict[str, Any]:
+    """Remove suspend restriction from a worker."""
+    if not validate_uuid(worker_id):
+        raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
+    if not db_get_worker(worker_id):
+        raise HTTPException(HTTP_NOT_FOUND, "Worker not found")
+    db_set_worker_restriction(worker_id, None)
+    return {"success": True, "worker_id": worker_id, "restriction": None}
 
 
 @app.post("/admin/broadcast")

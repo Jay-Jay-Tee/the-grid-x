@@ -145,11 +145,26 @@ def settle_job(
         credit(user_id, refund)
         logger.info(f"settle_job: Job {job_id} refunded {refund} to {user_id} (reserved={reserved}, actual={actual_cost})")
 
-    # Pay worker owner
+    # Update total_spent for submitter (actual cost charged)
+    if actual_cost > 0 and user_id:
+        conn = get_db()
+        conn.execute(
+            "UPDATE user_credits SET total_spent=total_spent+?, last_updated=? WHERE user_id=?",
+            (actual_cost, now(), user_id),
+        )
+        conn.commit()
+
+    # Pay worker owner and update total_earned
     if reward > 0 and worker_owner_id and (worker_owner_id or "").strip():
         owner_id = (worker_owner_id or "").strip()
         if owner_id:
             credit(owner_id, reward)
+            conn = get_db()
+            conn.execute(
+                "UPDATE user_credits SET total_earned=total_earned+?, last_updated=? WHERE user_id=?",
+                (reward, now(), owner_id),
+            )
+            conn.commit()
             logger.info(f"settle_job: Job {job_id} credited {reward} to worker owner {owner_id}")
 
     # Persist duration and actual cost on job (database module will do this if we pass it)
