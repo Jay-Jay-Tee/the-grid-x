@@ -46,7 +46,7 @@ Write-Host ""
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
 
 python -m pip install --quiet --upgrade pip setuptools wheel
-Write-Host "  ✓ pip upgraded" -ForegroundColor $Green
+Write-Host "pip upgraded" -ForegroundColor Green
 
 if (Test-Path "worker\requirements.txt") {
     pip install --quiet -r worker\requirements.txt
@@ -65,4 +65,3 @@ Write-Host "To start the worker, use one of these commands:"
 Write-Host "  python -m worker.main --user alice"
 Write-Host "  python -m worker.main --user alice --coordinator-ip localhost --http-port 8081 --ws-port 8080"
 Write-Host ""
-Pop-Location
