@@ -29,7 +29,7 @@ import requests
 from websockets import exceptions as ws_exceptions
 
 from .docker_manager import DockerManager
-from .task_queue import TaskQueue
+from .task_queue import TaskQueue, Task, TaskPriority, TaskStatus
 from .task_executor import TaskExecutor
 from .ws_worker_adapter import handle_assign_job
 from .resource_monitor import ResourceMonitor
@@ -228,6 +228,9 @@ class HybridWorker:
             docker_manager = DockerManager(docker_socket=docker_socket)
             task_queue = TaskQueue()
             executor = TaskExecutor(docker_manager, task_queue)
+            # Expose to instance so CLI submit can optionally run tasks locally
+            self.task_queue = task_queue
+            self.executor = executor
             
             # Start executor regardless of Docker availability so assigned jobs
             # are processed by the executor. If Docker is unavailable the
@@ -467,6 +470,7 @@ class HybridWorker:
         code: str,
         language: str = "python",
         wait_for_result: bool = True,
+        execute_locally: bool = False,
     ) -> Optional[str]:
         """Submit a job as a client."""
         
@@ -478,6 +482,46 @@ class HybridWorker:
             return None
         
         try:
+            # If requested, execute locally instead of submitting to coordinator.
+            # Note: local-only execution does not notify the coordinator and
+            # therefore won't earn credits or be visible in the central job list.
+            if execute_locally:
+                if not hasattr(self, 'task_queue') or not hasattr(self, 'executor'):
+                    print("❌ Local execution not available (worker not started).")
+                    return None
+
+                job_id = str(uuid.uuid4())
+                task = Task(
+                    task_id=job_id,
+                    code=code,
+                    language=language or "python",
+                    requirements={"cpu": {"cores": 1}},
+                    priority=TaskPriority.NORMAL,
+                    timeout=300,
+                )
+
+                # Enqueue the task onto local queue
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.task_queue.enqueue(task))
+                except RuntimeError:
+                    # no running loop; enqueue synchronously
+                    asyncio.run(self.task_queue.enqueue(task))
+
+                print(f"✅ Local job queued: {job_id}")
+                self.activity_log.add_entry("Job Submitted Local", f"ID: {job_id[:8]}...")
+
+                if wait_for_result:
+                    # Blocking or schedule waiting depending on event loop
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(asyncio.to_thread(self._wait_for_local_job, job_id))
+                    except RuntimeError:
+                        self._wait_for_local_job(job_id)
+
+                return job_id
+
+            # Default: submit to coordinator
             response = requests.post(
                 f"{self.coordinator_http}/jobs",
                 json={
@@ -612,6 +656,46 @@ class HybridWorker:
         print(f"\n❌ Job polling timeout after {timeout_seconds//60} minutes")
         print(f"   The job may still be executing on a remote worker")
         print(f"   Check status with: GET /jobs/{job_id}")
+
+    def _wait_for_local_job(self, job_id: str):
+        """Wait for a locally-queued task to complete and print results."""
+        import time
+        if not hasattr(self, 'task_queue'):
+            print("❌ No local task queue available")
+            return
+
+        timeout_seconds = 60 * 10
+        start = time.time()
+
+        last_status = None
+        while time.time() - start < timeout_seconds:
+            t = self.task_queue.get_task(job_id)
+            if t is None:
+                time.sleep(0.5)
+                continue
+
+            status = t.status
+            if status != last_status:
+                print(f"📊 Local job status: {status}")
+                last_status = status
+
+            if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                try:
+                    if status == TaskStatus.COMPLETED:
+                        out = (t.result or {}).get('output', '')
+                        if out:
+                            print(f"📤 Output:\n{out}")
+                    else:
+                        err = t.error or (t.result or {}).get('error', '')
+                        if err:
+                            print(f"❌ Errors:\n{err}")
+                except Exception:
+                    pass
+                return
+
+            time.sleep(0.5)
+
+        print(f"\n❌ Local job polling timeout after {timeout_seconds//60} minutes")
     
     def get_credits(self) -> Optional[float]:
         """Get credit balance. Returns balance or None on error."""
@@ -700,7 +784,7 @@ class HybridWorker:
 async def run_interactive_cli(worker: HybridWorker):
     """Run interactive CLI for job submission while worker runs in background."""
     print(f"💬 Interactive Mode")
-    print(f"   Commands: submit <code> | file <path> | credits | workers | status | log | help | quit")
+    print(f"   Commands: submit <code> | submit local <code> | submit local file <path> | file <path> | file local <path> | credits | workers | status | log | help | quit")
     
     # Show initial status
     await asyncio.sleep(3)  # Give worker time to connect
@@ -744,31 +828,65 @@ async def run_interactive_cli(worker: HybridWorker):
                 worker.activity_log.display_recent(15)
             
             elif cmd == "help":
-                print("""
+                                print("""
 Commands:
-  submit <code>     Submit Python code (e.g., submit print('hello'))
-  file <path>       Submit code from file (e.g., file script.py)
-  credits           Check your credit balance
-  workers           List all workers in network
-  status            Show worker connection status
-  log               Show recent activity log
-  help              Show this help
-  quit              Exit
-                """)
+    submit <code>               Submit Python code to the coordinator
+    submit local <code>         Execute code locally on this worker (no coordinator)
+    submit local file <path>    Execute a file locally (no coordinator)
+    file <path>                 Submit code from file to coordinator (e.g., file script.py)
+    file local <path>           Execute a file locally (no coordinator)
+    credits                     Check your credit balance
+    workers                     List all workers in network
+    status                      Show worker connection status
+    log                         Show recent activity log
+    help                        Show this help
+    quit                        Exit
+
+Notes:
+    - Local variants run only on this machine and do NOT register with the coordinator
+        (they won't appear in the central job list or earn credits).
+                                """)
             
             elif cmd.startswith("submit "):
-                code = cmd[7:].strip()
-                if code:
-                    worker.submit_job(code)
+                payload = cmd[7:].strip()
+                # Allow 'submit local file <path>' or 'submit local <code>'
+                if payload.startswith("local file "):
+                    filepath = payload[len("local file "):].strip()
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            code = f.read()
+                        worker.submit_job(code, execute_locally=True)
+                    except FileNotFoundError:
+                        print(f"❌ File not found: {filepath}")
+                    except Exception as e:
+                        print(f"❌ Error reading file: {e}")
+                elif payload.startswith("local "):
+                    code = payload[6:].strip()
+                    if code:
+                        worker.submit_job(code, execute_locally=True)
+                    else:
+                        print("❌ No code provided for local submit")
                 else:
-                    print("❌ No code provided")
+                    code = payload
+                    if code:
+                        worker.submit_job(code)
+                    else:
+                        print("❌ No code provided")
             
             elif cmd.startswith("file "):
-                filepath = cmd[5:].strip()
+                rest = cmd[5:].strip()
+                # Support: file <path>  and  file local <path>
+                if rest.startswith("local "):
+                    filepath = rest[6:].strip()
+                    execute_locally = True
+                else:
+                    filepath = rest
+                    execute_locally = False
+
                 try:
-                    with open(filepath, 'r') as f:
+                    with open(filepath, 'r', encoding='utf-8') as f:
                         code = f.read()
-                    worker.submit_job(code)
+                    worker.submit_job(code, execute_locally=execute_locally)
                 except FileNotFoundError:
                     print(f"❌ File not found: {filepath}")
                 except Exception as e:
