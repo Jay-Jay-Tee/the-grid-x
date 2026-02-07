@@ -346,12 +346,10 @@ class HybridWorker:
                                 self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
                     # Ensure heartbeat task is cancelled when websocket context exits
                     try:
-                        pass
-                    finally:
-                        try:
+                        if 'hb_task' in locals() and hb_task is not None:
                             hb_task.cancel()
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
                     else:
                         print(f"❌ Authentication failed - check your password")
                         self.activity_log.add_entry("Auth Failed", "Invalid credentials")
