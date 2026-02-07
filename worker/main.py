@@ -434,11 +434,24 @@ class HybridWorker:
             
             return job_id
             
-        except requests.exceptions.ConnectionError:
-            print(f"❌ Cannot connect to coordinator at {self.coordinator_http}")
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Cannot connect to coordinator at {self.coordinator_http}: {e}")
+            print("   Check network, firewall, or the --coordinator-ip value.")
+            return None
+        except requests.exceptions.Timeout:
+            print(f"⚠️  Coordinator timed out at {self.coordinator_http}. Try again later.")
+            return None
+        except requests.exceptions.HTTPError as e:
+            # Attempt to include response text for more context
+            resp_text = None
+            try:
+                resp_text = response.text
+            except Exception:
+                resp_text = ''
+            print(f"❌ HTTP error submitting job: {e}. {resp_text}")
             return None
         except Exception as e:
-            print(f"❌ Error submitting job: {e}")
+            print(f"❌ Error submitting job: {repr(e)}")
             return None
     
     def _wait_for_job(self, job_id: str):

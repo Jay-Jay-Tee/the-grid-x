@@ -14,12 +14,20 @@ lock = asyncio.Lock()
 
 def get_idle_worker_id() -> Optional[str]:
     """Return first idle connected worker id."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.debug(f"get_idle_worker_id: checking {len(workers_ws)} workers in registry")
     for wid, w in workers_ws.items():
         # Only consider workers that report they can execute tasks
         caps = w.get("caps") or {}
         can_execute = caps.get("can_execute", True)
-        if w.get("status") == "idle" and can_execute:
+        status = w.get("status")
+        logger.debug(f"  Worker {wid[:12]}...: status={status}, can_execute={can_execute}, caps={caps}")
+        if status == "idle" and can_execute:
+            logger.debug(f"  → Selected worker {wid[:12]}...")
             return wid
+    logger.debug(f"  → No idle worker found")
     return None
 
 

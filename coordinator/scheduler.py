@@ -99,6 +99,7 @@ async def dispatch() -> None:
             while not job_queue.empty():
                 idle_id: Optional[str] = get_idle_worker_id()
                 if idle_id is None:
+                    logger.warning(f"dispatch: No idle worker available. Queue size: {job_queue.qsize()}")
                     return
 
                 try:
@@ -108,8 +109,10 @@ async def dispatch() -> None:
 
                 job_row = db_get_job(job_id)
                 if not job_row:
+                    logger.warning(f"dispatch: Job {job_id} not found in DB")
                     continue
 
+                logger.info(f"dispatch: Assigning job {job_id} to worker {idle_id}")
                 set_worker_busy(idle_id)
                 db_set_worker_status(idle_id, "busy")
                 db_set_job_assigned(job_id, idle_id)
@@ -168,6 +171,7 @@ def on_job_result(
     stdout: str,
     stderr: str,
 ) -> None:
+    logger.info(f"on_job_result: Job {job_id} completed on worker {worker_id} (exit_code={exit_code})")
     db_set_job_completed(job_id, stdout, stderr, exit_code)
     set_worker_idle(worker_id)
     db_set_worker_status(worker_id, "idle")
@@ -179,6 +183,7 @@ def on_job_result(
         if owner_id:
             reward = get_worker_reward()
             credit(owner_id, reward)
+            logger.info(f"on_job_result: Credited {reward} to worker owner {owner_id}")
 
     # Dispatch next job (caller should await dispatch() after this)
     asyncio.create_task(dispatch())
