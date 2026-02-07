@@ -91,7 +91,7 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                 async with lock:
                     register_worker_ws(worker_id, ws, caps)
 
-                db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
+                db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id)
 
                 await ws.send(json.dumps({"type": "hello_ack", "worker_id": worker_id}))
                 await dispatch()

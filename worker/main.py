@@ -227,6 +227,8 @@ class HybridWorker:
         gpu = monitor.get_gpu_metrics()
         if gpu and gpu.get("count", 0) > 0:
             caps["gpu"] = True
+        # Indicate whether this worker can actually execute tasks (Docker available)
+        caps["can_execute"] = docker_manager.available
         
         print(f"👷 Starting worker process...")
         print(f"   Worker ID: {worker_id[:16]}...")
@@ -424,7 +426,11 @@ class HybridWorker:
         import time
         print(f"⏳ Waiting for job {job_id}...")
         
-        while True:
+        max_retries = 300  # 300 * 2 seconds = 10 minutes timeout
+        retry_count = 0
+        last_status = "queued"
+        
+        while retry_count < max_retries:
             try:
                 response = requests.get(
                     f"{self.coordinator_http}/jobs/{job_id}",
@@ -434,22 +440,38 @@ class HybridWorker:
                 job = response.json()
                 
                 status = job["status"]
-                if status in ["completed", "failed"]:
+                
+                # Report status change
+                if status != last_status:
+                    print(f"📊 Job status: {status}")
+                    last_status = status
+                
+                if status in ["completed", "failed", "error"]:
                     print(f"\n{'='*60}")
-                    print(f"Job {status.upper()}")
+                    print(f"✅ Job {status.upper()}")
                     print(f"{'='*60}")
                     
                     if job.get('stdout'):
-                        print(f"Output:\n{job['stdout']}")
+                        print(f"📤 Output:\n{job['stdout']}")
                     if job.get('stderr'):
-                        print(f"Errors:\n{job['stderr']}")
+                        print(f"❌ Errors:\n{job['stderr']}")
+                    if job.get('exit_code'):
+                        print(f"Exit code: {job['exit_code']}")
                     print(f"{'='*60}\n")
                     break
                 
                 time.sleep(2)
+                retry_count += 1
+                
             except Exception as e:
-                print(f"❌ Error checking job: {e}")
-                break
+                print(f"⚠️  Error checking job: {e}")
+                retry_count += 1
+                time.sleep(2)
+        
+        if retry_count >= max_retries:
+            print(f"\n❌ Job polling timeout after 10 minutes")
+            print(f"   The job may still be executing on a remote worker")
+            print(f"   Check status with: GET /jobs/{job_id}")
     
     def check_credits(self):
         """Check and display credit balance."""

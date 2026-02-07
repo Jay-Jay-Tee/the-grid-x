@@ -15,7 +15,10 @@ lock = asyncio.Lock()
 def get_idle_worker_id() -> Optional[str]:
     """Return first idle connected worker id."""
     for wid, w in workers_ws.items():
-        if w.get("status") == "idle":
+        # Only consider workers that report they can execute tasks
+        caps = w.get("caps") or {}
+        can_execute = caps.get("can_execute", True)
+        if w.get("status") == "idle" and can_execute:
             return wid
     return None
 

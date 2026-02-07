@@ -274,7 +274,12 @@ async def get_job(job_id: str) -> Dict[str, Any]:
 async def list_workers():
     """List all registered workers"""
     workers = db_list_workers()
-    return {"workers": workers, "count": len(workers)}
+    # Return just the list for backward compatibility
+    workers_list = []
+    for w in workers:
+        worker_dict = dict(w) if hasattr(w, 'keys') else w
+        workers_list.append(worker_dict)
+    return workers_list
 
 
 @app.post("/workers/register")
