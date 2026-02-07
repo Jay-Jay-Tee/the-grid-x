@@ -53,10 +53,11 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                 logger.warning(f"Invalid JSON from {peer_ip}")
                 continue
 
-            msg_type = msg.get("type")
+            try:
+                msg_type = msg.get("type")
 
-            # Handle initial connection
-            if msg_type == "hello":
+                # Handle initial connection
+                if msg_type == "hello":
                 incoming_worker_id = msg.get("worker_id") or str(uuid.uuid4())
                 caps = msg.get("caps", {"cpu_cores": 1, "gpu_count": 0})
                 owner_id = msg.get("owner_id") or ""
@@ -155,6 +156,10 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
 
                 await dispatch()
                 continue
+
+            except Exception as e:
+                logger.error(f"Error handling message from worker {worker_id or 'unknown'}: {e}", exc_info=True)
+                raise
 
     except websockets.exceptions.ConnectionClosed:
         logger.info(f"Connection closed for worker {worker_id or 'unknown'}")

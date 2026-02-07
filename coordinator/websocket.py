@@ -37,9 +37,10 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
             except json.JSONDecodeError:
                 continue
 
-            t = msg.get("type")
+            try:
+                t = msg.get("type")
 
-            if t == "hello":
+                if t == "hello":
                 incoming_worker_id = msg.get("worker_id") or str(uuid.uuid4())
                 caps = msg.get("caps", {"cpu_cores": 0, "gpu": False})
                 owner_id = msg.get("owner_id") or ""
@@ -131,8 +132,18 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                 await dispatch()
                 continue
 
+            except Exception as e:
+                print(f"❌ Error handling message from worker {worker_id or 'unknown'}: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+
     except websockets.exceptions.ConnectionClosed:
         pass
+    except Exception as e:
+        print(f"❌ Unexpected error in worker handler: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         if worker_id:
             async with lock:
