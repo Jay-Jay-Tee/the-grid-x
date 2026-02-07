@@ -4,13 +4,13 @@ This is the default way to participate in Grid-X network.
 
 Usage:
   # Interactive mode (worker + CLI)
-  python -m worker.main --user alice
+  python -m worker.main --user alice --password yourpass
   
   # Worker-only mode (background service)
-  python -m worker.main --user alice --no-cli
+  python -m worker.main --user alice --password yourpass --no-cli
   
   # Specify coordinator
-  python -m worker.main --user alice --coordinator-ip 192.168.1.100
+  python -m worker.main --user alice --password yourpass --coordinator-ip 192.168.1.100
 """
 
 import asyncio
@@ -18,8 +18,11 @@ import json
 import os
 import sys
 import uuid
+import hashlib
+from pathlib import Path
 from typing import Optional
 import argparse
+import time
 
 import websockets
 import requests
@@ -31,24 +34,166 @@ from ws_worker_adapter import handle_assign_job
 from resource_monitor import ResourceMonitor
 
 
+class WorkerIdentity:
+    """Manages persistent worker identity and authentication."""
+    
+    def __init__(self, user_id: str, password: str):
+        self.user_id = user_id
+        self.password = password
+        self.config_dir = Path.home() / ".gridx"
+        self.config_file = self.config_dir / f"worker_{user_id}.json"
+        self.worker_id = None
+        self.auth_token = None
+        
+    def _hash_credentials(self) -> str:
+        """Create auth token from username and password."""
+        combined = f"{self.user_id}:{self.password}"
+        return hashlib.sha256(combined.encode()).hexdigest()
+    
+    def load_or_create_identity(self) -> dict:
+        """Load existing worker identity or create new one."""
+        self.auth_token = self._hash_credentials()
+        
+        # Create config directory if it doesn't exist
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Try to load existing identity
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    data = json.load(f)
+                    stored_user_id = data.get('user_id')
+                    
+                    # If username matches, always use the existing worker_id
+                    # The server will validate the password
+                    if stored_user_id == self.user_id:
+                        self.worker_id = data.get('worker_id')
+                        # Update auth token in case password changed
+                        data['auth_token'] = self.auth_token
+                        data['last_used'] = time.time()
+                        
+                        # Save updated data
+                        with open(self.config_file, 'w') as f_write:
+                            json.dump(data, f_write, indent=2)
+                        
+                        print(f"✓ Loaded existing worker identity")
+                        print(f"  Worker ID: {self.worker_id[:16]}...")
+                        return data
+            except Exception as e:
+                print(f"⚠️  Error loading identity: {e}")
+        
+        # Create new identity (only for brand new users)
+        self.worker_id = str(uuid.uuid4())
+        data = {
+            'worker_id': self.worker_id,
+            'user_id': self.user_id,
+            'auth_token': self.auth_token,
+            'created_at': time.time(),
+            'last_used': time.time()
+        }
+        
+        # Save to file
+        with open(self.config_file, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        print(f"✓ Created new worker identity")
+        print(f"  Worker ID: {self.worker_id[:16]}...")
+        
+        return data
+    
+    def get_worker_id(self) -> str:
+        """Get the persistent worker ID."""
+        if not self.worker_id:
+            self.load_or_create_identity()
+        return self.worker_id
+    
+    def get_auth_token(self) -> str:
+        """Get the authentication token."""
+        if not self.auth_token:
+            self.auth_token = self._hash_credentials()
+        return self.auth_token
+
+
+class ActivityLogger:
+    """Logs recent worker activity in privacy-preserving format."""
+    
+    def __init__(self, max_entries: int = 50):
+        self.max_entries = max_entries
+        self.log = []
+    
+    def add_entry(self, event_type: str, details: str = ""):
+        """Add a log entry with timestamp."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        entry = {
+            'timestamp': timestamp,
+            'type': event_type,
+            'details': details
+        }
+        self.log.append(entry)
+        
+        # Keep only most recent entries
+        if len(self.log) > self.max_entries:
+            self.log = self.log[-self.max_entries:]
+    
+    def get_recent(self, count: int = 10) -> list:
+        """Get recent log entries."""
+        return self.log[-count:]
+    
+    def display_recent(self, count: int = 10):
+        """Display recent activity."""
+        entries = self.get_recent(count)
+        if not entries:
+            print("No recent activity")
+            return
+        
+        print(f"\n📋 Recent Activity (last {len(entries)} events):")
+        print("-" * 60)
+        for entry in entries:
+            print(f"[{entry['timestamp']}] {entry['type']}")
+            if entry['details']:
+                print(f"  └─ {entry['details']}")
+        print("-" * 60 + "\n")
+
+
 class HybridWorker:
     """Worker that also provides client CLI functionality."""
     
-    def __init__(self, user_id: str, coordinator_ip: str = "localhost", 
+    def __init__(self, user_id: str, password: str, coordinator_ip: str = "localhost", 
                  http_port: int = 8081, ws_port: int = 8080):
         self.user_id = user_id
         self.coordinator_http = f"http://{coordinator_ip}:{http_port}"
         self.coordinator_ws = f"ws://{coordinator_ip}:{ws_port}/ws/worker"
         
-        print(f"🚀 Grid-X Hybrid Worker-Client")
+        # Identity management
+        self.identity = WorkerIdentity(user_id, password)
+        self.identity.load_or_create_identity()
+        
+        # Activity logging
+        self.activity_log = ActivityLogger()
+        
+        # Connection state
+        self.is_connected = False
+        self.last_heartbeat = 0
+        self.connection_attempts = 0
+        
+        print(f"\n🚀 Grid-X Hybrid Worker-Client")
         print(f"   User: {user_id}")
         print(f"   Coordinator HTTP: {self.coordinator_http}")
         print(f"   Coordinator WS: {self.coordinator_ws}")
         print()
     
+    def _check_coordinator_connection(self) -> bool:
+        """Check if coordinator is reachable."""
+        try:
+            response = requests.get(f"{self.coordinator_http}/workers", timeout=2)
+            return response.status_code in [200, 201]
+        except Exception:
+            return False
+    
     async def run_worker(self):
         """Run the worker loop - connects to coordinator and executes jobs."""
-        worker_id = str(uuid.uuid4())
+        worker_id = self.identity.get_worker_id()
+        auth_token = self.identity.get_auth_token()
         
         # Docker setup
         def _docker_socket() -> Optional[str]:
@@ -77,57 +222,162 @@ class HybridWorker:
             caps["gpu"] = True
         
         print(f"👷 Starting worker process...")
-        print(f"   Owner: {self.user_id} (you'll earn credits when this runs jobs)")
+        print(f"   Worker ID: {worker_id[:16]}...")
+        print(f"   Owner: {self.user_id}")
         print(f"   Capabilities: {caps['cpu_cores']} CPU cores, GPU: {caps['gpu']}")
         print()
         
         # Worker connection loop
+        reconnect_delay = 5
+        max_reconnect_delay = 60
+        
         while True:
             try:
+                # Check if coordinator is reachable before connecting
+                if not self._check_coordinator_connection():
+                    self.is_connected = False
+                    self.connection_attempts += 1
+                    
+                    if self.connection_attempts == 1:
+                        print(f"❌ Cannot reach coordinator at {self.coordinator_http}")
+                        print(f"   Retrying every {reconnect_delay}s...")
+                        self.activity_log.add_entry("Connection Failed", "Coordinator unreachable")
+                    
+                    await asyncio.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+                    continue
+                
+                # Reset reconnect delay on successful ping
+                reconnect_delay = 5
+                
                 async with websockets.connect(
                     self.coordinator_ws,
                     ping_interval=20,
                     ping_timeout=20,
                     close_timeout=5,
                 ) as ws:
+                    # Send hello with authentication
                     await ws.send(json.dumps({
                         "type": "hello",
                         "worker_id": worker_id,
                         "owner_id": self.user_id,
+                        "auth_token": auth_token,
                         "caps": caps,
                     }))
                     
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                        except Exception:
-                            continue
+                    # Wait for acknowledgment
+                    ack_msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                    ack = json.loads(ack_msg)
+                    
+                    # Check for authentication error
+                    if ack.get("type") == "auth_error":
+                        print(f"\n{'='*60}")
+                        print(f"❌ AUTHENTICATION FAILED")
+                        print(f"{'='*60}")
+                        print(f"\n{ack.get('error', 'Invalid credentials')}\n")
+                        print(f"This username already exists with a different password.")
+                        print(f"Please use the correct password or choose a different username.")
+                        print(f"\n{'='*60}\n")
+                        self.activity_log.add_entry("Auth Failed", ack.get('error', 'Invalid credentials'))
+                        # Raise exception to trigger cleanup and prevent CLI from starting
+                        raise RuntimeError("Authentication failed - invalid credentials")
+                    
+                    if ack.get("type") == "hello_ack":
+                        if not self.is_connected:
+                            print(f"✅ Connected to coordinator")
+                            print(f"   You're now earning credits when jobs run on your worker!\n")
+                            self.activity_log.add_entry("Connected", "Worker registered with coordinator")
                         
-                        t = msg.get("type")
-                        if not t:
-                            continue
+                        self.is_connected = True
+                        self.connection_attempts = 0
+                        self.last_heartbeat = time.time()
                         
-                        if t == "hello_ack":
-                            worker_id = msg.get("worker_id", worker_id)
-                            continue
-                        
-                        if t == "assign_job":
-                            await ws.send(json.dumps({
-                                "type": "job_started",
-                                "job_id": msg["job"]["job_id"],
-                            }))
-                            await handle_assign_job(msg, ws, executor, task_queue)
+                        # Handle messages
+                        async for raw in ws:
+                            try:
+                                msg = json.loads(raw)
+                            except Exception:
+                                continue
                             
-            except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError, OSError) as e:
-                print(f"Disconnected from coordinator: {e}. Reconnecting in 5s...")
-                await asyncio.sleep(5)
+                            t = msg.get("type")
+                            if not t:
+                                continue
+                            
+                            # Update heartbeat
+                            self.last_heartbeat = time.time()
+                            
+                            if t == "hello_ack":
+                                continue
+                            
+                            if t == "assign_job":
+                                job_id = msg["job"]["job_id"]
+                                self.activity_log.add_entry("Job Assigned", f"ID: {job_id[:8]}...")
+                                
+                                await ws.send(json.dumps({
+                                    "type": "job_started",
+                                    "job_id": job_id,
+                                }))
+                                
+                                await handle_assign_job(msg, ws, executor, task_queue)
+                                self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
+                    else:
+                        print(f"❌ Authentication failed - check your password")
+                        self.activity_log.add_entry("Auth Failed", "Invalid credentials")
+                        await asyncio.sleep(30)
+                        
+            except websockets.exceptions.ConnectionClosed as e:
+                self.is_connected = False
+                if self.connection_attempts == 0:
+                    print(f"⚠️  Disconnected from coordinator. Reconnecting...")
+                    self.activity_log.add_entry("Disconnected", "Connection closed")
+                await asyncio.sleep(reconnect_delay)
+                self.connection_attempts += 1
+                
+            except (ConnectionRefusedError, OSError) as e:
+                self.is_connected = False
+                if self.connection_attempts == 0:
+                    print(f"❌ Cannot connect to coordinator: {e}")
+                    print(f"   Retrying every {reconnect_delay}s...")
+                    self.activity_log.add_entry("Connection Error", str(e)[:50])
+                await asyncio.sleep(reconnect_delay)
+                self.connection_attempts += 1
+                reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+                
+            except asyncio.TimeoutError:
+                self.is_connected = False
+                print(f"⚠️  Connection timeout. Retrying...")
+                self.activity_log.add_entry("Timeout", "No response from coordinator")
+                await asyncio.sleep(reconnect_delay)
+                
+            except RuntimeError as e:
+                # Authentication failure - do not retry
+                if "Authentication failed" in str(e):
+                    self.is_connected = False
+                    return  # Exit gracefully
+                else:
+                    # Other runtime errors - retry
+                    self.is_connected = False
+                    print(f"❌ Runtime error: {e}. Reconnecting...")
+                    self.activity_log.add_entry("Error", str(e)[:50])
+                    await asyncio.sleep(reconnect_delay)
+                
             except Exception as e:
-                print(f"Worker error: {e}. Reconnecting in 5s...")
-                await asyncio.sleep(5)
+                self.is_connected = False
+                print(f"❌ Worker error: {e}. Reconnecting...")
+                self.activity_log.add_entry("Error", str(e)[:50])
+                await asyncio.sleep(reconnect_delay)
     
     # Client functionality methods
     def submit_job(self, code: str, wait_for_result: bool = True) -> Optional[str]:
         """Submit a job as a client."""
+        
+        # Check connection status first
+        if not self.is_connected:
+            print(f"❌ Not connected to coordinator - cannot submit job")
+            print(f"   Your worker is not earning credits or able to submit jobs.")
+            print(f"   Type 'status' to check connection or wait for reconnection.")
+            return None
+        
         try:
             response = requests.post(
                 f"{self.coordinator_http}/jobs",
@@ -147,6 +397,7 @@ class HybridWorker:
             response.raise_for_status()
             job_id = response.json()["job_id"]
             print(f"✅ Job submitted: {job_id}")
+            self.activity_log.add_entry("Job Submitted", f"ID: {job_id[:8]}...")
             
             if wait_for_result:
                 self._wait_for_job(job_id)
@@ -218,26 +469,58 @@ class HybridWorker:
             response.raise_for_status()
             workers = response.json()
             
+            my_worker_id = self.identity.get_worker_id()
+            
             print(f"\n🖥️  Workers in network: {len(workers)}")
             for w in workers:
-                status_emoji = "✅" if w['status'] == 'idle' else "🔄"
+                status_emoji = "✅" if w['status'] == 'idle' else ("🔄" if w['status'] == 'busy' else "⚫")
                 owner = w.get('owner_id', 'unknown')
-                you = " (YOU)" if owner == self.user_id else ""
-                print(f"  {status_emoji} {w['id'][:12]}... - {w['status']} - Owner: {owner}{you}")
+                is_you = " (YOU)" if w['id'] == my_worker_id else ""
+                print(f"  {status_emoji} {w['id'][:12]}... - {w['status']} - Owner: {owner}{is_you}")
             print()
             
         except Exception as e:
             print(f"❌ Error listing workers: {e}")
+    
+    def show_status(self):
+        """Show worker connection status."""
+        status = "🟢 CONNECTED" if self.is_connected else "🔴 DISCONNECTED"
+        print(f"\n{status}")
+        print(f"Worker ID: {self.identity.get_worker_id()[:16]}...")
+        print(f"User: {self.user_id}")
+        if self.is_connected:
+            elapsed = time.time() - self.last_heartbeat
+            print(f"Last heartbeat: {elapsed:.1f}s ago")
+            print(f"Status: Earning credits ✅")
+        else:
+            print(f"Status: Not earning credits (disconnected)")
+        print()
 
 
 async def run_interactive_cli(worker: HybridWorker):
     """Run interactive CLI for job submission while worker runs in background."""
     print(f"💬 Interactive Mode")
-    print(f"   Commands: submit <code> | file <path> | credits | workers | help | quit")
-    print(f"   Your worker is running in the background earning credits!\n")
+    print(f"   Commands: submit <code> | file <path> | credits | workers | status | log | help | quit")
+    
+    # Show initial status
+    await asyncio.sleep(3)  # Give worker time to connect
+    worker.show_status()
+    
+    # Track disconnection warnings
+    last_disconnection_warning = 0
     
     while True:
         try:
+            # Check if worker lost connection and warn periodically
+            if not worker.is_connected:
+                current_time = time.time()
+                # Show warning every 30 seconds to avoid spam
+                if current_time - last_disconnection_warning > 30:
+                    print(f"\n⚠️  Lost connection to coordinator!")
+                    print(f"   Worker is attempting to reconnect...")
+                    print(f"   Type 'status' to check or 'quit' to exit.\n")
+                    last_disconnection_warning = current_time
+            
             cmd = await asyncio.to_thread(input, f"{worker.user_id}> ")
             cmd = cmd.strip()
             
@@ -254,6 +537,12 @@ async def run_interactive_cli(worker: HybridWorker):
             elif cmd == "workers":
                 worker.list_workers()
             
+            elif cmd == "status":
+                worker.show_status()
+            
+            elif cmd == "log":
+                worker.activity_log.display_recent(15)
+            
             elif cmd == "help":
                 print("""
 Commands:
@@ -261,6 +550,8 @@ Commands:
   file <path>       Submit code from file (e.g., file script.py)
   credits           Check your credit balance
   workers           List all workers in network
+  status            Show worker connection status
+  log               Show recent activity log
   help              Show this help
   quit              Exit
                 """)
@@ -301,18 +592,20 @@ async def main():
         epilog="""
 Examples:
   # Interactive mode (recommended)
-  python -m worker.main --user alice
+  python -m worker.main --user alice --password mypass123
   
   # With remote coordinator
-  python -m worker.main --user alice --coordinator-ip 192.168.1.100
+  python -m worker.main --user alice --password mypass123 --coordinator-ip 192.168.1.100
   
   # Worker-only mode (no CLI, background service)
-  python -m worker.main --user alice --no-cli
+  python -m worker.main --user alice --password mypass123 --no-cli
         """
     )
     
     parser.add_argument("--user", required=True,
                        help="Your user ID (for credit tracking)")
+    parser.add_argument("--password", required=True,
+                       help="Your password (for authentication)")
     parser.add_argument("--coordinator-ip", default="localhost",
                        help="IP address of coordinator (default: localhost)")
     parser.add_argument("--http-port", type=int, default=8081,
@@ -327,6 +620,7 @@ Examples:
     # Create hybrid worker
     worker = HybridWorker(
         user_id=args.user,
+        password=args.password,
         coordinator_ip=args.coordinator_ip,
         http_port=args.http_port,
         ws_port=args.ws_port
@@ -334,14 +628,48 @@ Examples:
     
     if args.no_cli:
         # Just run worker (blocking)
-        await worker.run_worker()
+        try:
+            await worker.run_worker()
+        except RuntimeError as e:
+            if "Authentication failed" in str(e):
+                # Clean exit on auth failure
+                pass
+            else:
+                raise
     else:
         # Run worker in background + interactive CLI
         worker_task = asyncio.create_task(worker.run_worker())
         
-        # Give worker a moment to start
-        await asyncio.sleep(2)
+        # Give worker MORE time to complete initial connection/auth
+        # Increased from 2 to 5 seconds to avoid race conditions
+        await asyncio.sleep(5)
         
+        # Check if worker task failed due to auth
+        if worker_task.done():
+            try:
+                worker_task.result()
+            except RuntimeError as e:
+                if "Authentication failed" in str(e):
+                    # Auth failed - DO NOT START CLI, exit completely
+                    print("\n⚠️  Cannot start interactive mode - authentication failed")
+                    print("Please check your username and password and try again.\n")
+                    return  # Exit without starting CLI
+                else:
+                    raise
+        
+        # Verify worker is actually connected before starting CLI
+        # This prevents CLI from starting if authentication is still in progress
+        if not worker.is_connected:
+            print("\n⚠️  Cannot start interactive mode - not connected to coordinator")
+            print("Please check your coordinator address and try again.\n")
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+            return
+        
+        # NOW it's safe to start CLI
         try:
             await run_interactive_cli(worker)
         finally:
@@ -350,6 +678,10 @@ Examples:
                 await worker_task
             except asyncio.CancelledError:
                 pass
+            except RuntimeError as e:
+                # Suppress auth failure errors during shutdown
+                if "Authentication failed" not in str(e):
+                    raise
 
 
 if __name__ == "__main__":

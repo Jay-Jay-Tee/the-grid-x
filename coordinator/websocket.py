@@ -1,5 +1,6 @@
 """
-Grid-X Coordinator - Real-time WebSocket handler for workers.
+Grid-X Coordinator - Real-time WebSocket handler for workers with authentication.
+FIXED VERSION - Properly rejects wrong passwords instead of creating new workers.
 """
 
 import asyncio
@@ -10,7 +11,11 @@ from typing import Optional
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from database import db_init, db_set_worker_offline, db_set_worker_status, db_upsert_worker, now
+from database import (
+    db_init, db_set_worker_offline, db_set_worker_status, 
+    db_upsert_worker, db_get_worker_by_auth, db_verify_worker_auth, 
+    db_verify_user_auth, now
+)
 from workers import lock, register_worker_ws, unregister_worker_ws, update_worker_last_seen
 from scheduler import dispatch, job_queue, on_job_started, on_job_result
 
@@ -35,14 +40,58 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
             t = msg.get("type")
 
             if t == "hello":
-                worker_id = msg.get("worker_id") or str(uuid.uuid4())
+                incoming_worker_id = msg.get("worker_id") or str(uuid.uuid4())
                 caps = msg.get("caps", {"cpu_cores": 0, "gpu": False})
-                owner_id = msg.get("owner_id") or ""  # Optional: user who gets credits when jobs run here
+                owner_id = msg.get("owner_id") or ""
+                auth_token = msg.get("auth_token", "")
+
+                # FIXED AUTHENTICATION LOGIC
+                if auth_token and owner_id:
+                    # Check if user already has credentials registered
+                    user_exists = db_verify_user_auth(owner_id, auth_token)
+                    
+                    if user_exists:
+                        # User exists and password is correct
+                        # Check if they have an existing worker
+                        existing_worker = db_get_worker_by_auth(owner_id, auth_token)
+                        
+                        if existing_worker:
+                            # Reconnecting with existing worker
+                            worker_id = existing_worker['id']
+                            print(f"✓ Worker {worker_id[:12]}... authenticated (owner: {owner_id})")
+                        else:
+                            # User is correct but this is a new worker for them
+                            worker_id = incoming_worker_id
+                            print(f"✓ New worker {worker_id[:12]}... registered (owner: {owner_id})")
+                    else:
+                        # Check if this owner_id exists in the database with different credentials
+                        from database import get_db
+                        existing_user = get_db().execute(
+                            "SELECT user_id FROM user_auth WHERE user_id=?", (owner_id,)
+                        ).fetchone()
+                        
+                        if existing_user:
+                            # User exists but password is WRONG - REJECT
+                            print(f"❌ Authentication failed for user: {owner_id} (wrong password)")
+                            await ws.send(json.dumps({
+                                "type": "auth_error",
+                                "error": "Authentication failed: Invalid password for this username"
+                            }))
+                            await ws.close(code=4401, reason="Authentication failed")
+                            return
+                        else:
+                            # Brand new user - register them
+                            worker_id = incoming_worker_id
+                            print(f"✓ New user {owner_id} registered with worker {worker_id[:12]}...")
+                else:
+                    # No auth token - backward compatibility (insecure)
+                    worker_id = incoming_worker_id
+                    print(f"⚠️  Worker {worker_id[:12]}... connected without authentication")
 
                 async with lock:
                     register_worker_ws(worker_id, ws, caps)
 
-                db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id)
+                db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
 
                 await ws.send(json.dumps({"type": "hello_ack", "worker_id": worker_id}))
                 await dispatch()
@@ -89,6 +138,7 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
             async with lock:
                 unregister_worker_ws(worker_id)
             db_set_worker_offline(worker_id)
+            print(f"✗ Worker {worker_id[:12]}... disconnected")
 
 
 async def ws_router(ws: WebSocketServerProtocol, path: Optional[str] = None) -> None:
