@@ -59,6 +59,11 @@ if (Test-Path "worker\requirements.txt") {
     Write-Host "Worker dependencies installed" -ForegroundColor Green
 }
 
+if (Test-Path "worker_app\requirements.txt") {
+    pip install --quiet -r worker_app\requirements.txt
+    Write-Host "Worker GUI (worker_app) dependencies installed" -ForegroundColor Green
+}
+
 if (Test-Path "requirements.txt") {
     pip install --quiet -r requirements.txt
     Write-Host "Common dependencies installed" -ForegroundColor Green
@@ -107,4 +112,7 @@ Write-Host "  python -m coordinator.main"
 Write-Host ""
 Write-Host "To start a worker:"
 Write-Host "  python -m worker.main"
+Write-Host ""
+Write-Host "To start the worker GUI (optional):"
+Write-Host "  python -m worker_app.main"
 Write-Host ""
