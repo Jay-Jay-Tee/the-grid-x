@@ -50,7 +50,7 @@ class LoginFrame(ctk.CTkFrame):
                  "║   G R I D - X   W O R K E R   N O D E   ║\n"
                  "║      [ ACCESS TERMINAL v1.0 ]         ║\n"
                  "╚══════════════════════════════════════╝",
-            font=ctk.CTkFont(family="Consolas", size=12),
+            font=ctk.CTkFont(family="Consolas", size=14),
             text_color=GREEN,
         )
         header.pack(pady=(0, 24))

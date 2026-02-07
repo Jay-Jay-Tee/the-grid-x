@@ -44,20 +44,44 @@ class DashboardFrame(ctk.CTkFrame):
         self.on_quit = on_quit
         self._refresh_job = None
         self._shutting_down = False
+        self._idle_workers = None
+        self._cursor_blink = True
+        self._pulse_step = 0
+        self._anim_running = True
 
         self._build_ui()
         self._start_refresh()
+        self._start_animations()
+        # Initial workers fetch after short delay
+        self.after(1500, self._update_workers)
 
     def _build_ui(self):
         """Build the dashboard UI - terminal style."""
-        # Terminal header
+        # Header row: title left, idle workers right
+        header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 10))
+
         title = ctk.CTkLabel(
-            self,
+            header_frame,
             text=f">>> GRID-X NODE // USER: {self.worker.user_id} <<<",
             font=TERMINAL_FONT_LARGE,
             text_color=GREEN,
         )
-        title.pack(pady=(0, 10))
+        title.pack(side="left")
+
+        # Idle workers badge - top right
+        self._idle_frame = ctk.CTkFrame(
+            header_frame, fg_color=BG_PANEL,
+            corner_radius=4, border_width=1, border_color=GREEN_DIM,
+        )
+        self._idle_frame.pack(side="right", padx=(10, 0))
+        self._idle_label = ctk.CTkLabel(
+            self._idle_frame,
+            text="IDLE: -- ",
+            font=TERMINAL_FONT,
+            text_color=GREEN_DIM,
+        )
+        self._idle_label.pack(padx=12, pady=6)
 
         # Tabs - styled for terminal
         self._tabview = ctk.CTkTabview(
@@ -142,7 +166,7 @@ class DashboardFrame(ctk.CTkFrame):
         ).pack(anchor="w", pady=(15, 5))
         self._activity_text = ctk.CTkTextbox(
             self._tab_status, height=200, state="disabled", wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=11),
+            font=ctk.CTkFont(family="Consolas", size=13),
             fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
         self._activity_text.pack(fill="both", expand=True, pady=(0, 10))
@@ -155,7 +179,7 @@ class DashboardFrame(ctk.CTkFrame):
         ).pack(anchor="w", pady=(0, 5))
         self._code_text = ctk.CTkTextbox(
             self._tab_submit, height=120, wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=12),
+            font=ctk.CTkFont(family="Consolas", size=14),
             fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
         self._code_text.pack(fill="x", pady=(0, 10))
@@ -199,7 +223,7 @@ class DashboardFrame(ctk.CTkFrame):
         ).pack(anchor="w", pady=(15, 5))
         self._submit_output = ctk.CTkTextbox(
             self._tab_submit, height=150, state="disabled", wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=11),
+            font=ctk.CTkFont(family="Consolas", size=13),
             fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
         self._submit_output.pack(fill="both", expand=True, pady=(0, 10))
@@ -359,7 +383,7 @@ class DashboardFrame(ctk.CTkFrame):
         ).pack(anchor="w", pady=(5, 5))
         self._output_text = ctk.CTkTextbox(
             self._tab_jobs, height=150, state="disabled", wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=11),
+            font=ctk.CTkFont(family="Consolas", size=13),
             fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
         )
         self._output_text.pack(fill="both", expand=True, pady=(0, 10))
@@ -497,9 +521,46 @@ class DashboardFrame(ctk.CTkFrame):
 
         threading.Thread(target=_fetch, daemon=True).start()
 
+    def _update_workers(self):
+        """Fetch worker list and update idle count."""
+        def _fetch():
+            try:
+                workers = self.worker.get_workers()
+                idle = sum(1 for w in workers if w.get('status') == 'idle') if workers else None
+                self._idle_workers = idle
+            except Exception:
+                self._idle_workers = None
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _start_animations(self):
+        """Start blinking cursor and status pulse animations."""
+        self._animate_cursor()
+        self._animate_status_pulse()
+
+    def _animate_cursor(self):
+        """Blink cursor after idle count."""
+        if self._shutting_down or not self._anim_running:
+            return
+        base = "IDLE: -- " if self._idle_workers is None else f"IDLE: {self._idle_workers} "
+        self._idle_label.configure(text=base + ("_" if self._cursor_blink else " "))
+        self._cursor_blink = not self._cursor_blink
+        self.after(500, self._animate_cursor)
+
+    def _animate_status_pulse(self):
+        """Subtle pulse on status indicator when connected."""
+        if self._shutting_down or not self._anim_running:
+            return
+        if self.worker.is_connected:
+            self._pulse_step = (self._pulse_step + 1) % 4
+            chars = ["[*]", "[+]", "[*]", "[+]"]
+            self._status_indicator.configure(text=chars[self._pulse_step], text_color=GREEN)
+        self.after(800, self._animate_status_pulse)
+
     def _refresh_credits(self):
-        """Manually refresh credits (only when Refresh button clicked)."""
+        """Manually refresh credits and worker count (when Refresh button clicked)."""
         self._update_credits()
+        self._update_workers()
 
     def _update_activity(self):
         """Update activity log."""
@@ -540,6 +601,7 @@ class DashboardFrame(ctk.CTkFrame):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self._anim_running = False
 
         if self._refresh_job:
             try:

@@ -12,11 +12,11 @@ AMBER = "#ffb000"         # Amber for warnings (like old terminals)
 RED = "#ff3333"           # Error red
 GRAY = "#4a4a4a"          # Muted gray
 
-# Font
-TERMINAL_FONT = ("Consolas", 12)
-TERMINAL_FONT_SMALL = ("Consolas", 10)
-TERMINAL_FONT_LARGE = ("Consolas", 14)
-TERMINAL_FONT_TITLE = ("Consolas", 18, "bold")
+# Font - slightly larger for readability
+TERMINAL_FONT = ("Consolas", 14)
+TERMINAL_FONT_SMALL = ("Consolas", 12)
+TERMINAL_FONT_LARGE = ("Consolas", 16)
+TERMINAL_FONT_TITLE = ("Consolas", 20, "bold")
 
 # Button style - terminal look
 BTN_FG = BG_DARK

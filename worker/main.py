@@ -746,25 +746,30 @@ class HybridWorker:
         else:
             print("❌ Error checking credits")
     
-    def list_workers(self):
-        """List all registered workers in the network."""
+    def get_workers(self) -> list:
+        """Get all registered workers. Returns list of worker dicts or [] on error."""
         try:
             response = requests.get(f"{self.coordinator_http}/workers", timeout=10)
             response.raise_for_status()
             workers = response.json()
-            
-            my_worker_id = self.identity.get_worker_id()
-            
-            print(f"\n🖥️  Workers in network: {len(workers)}")
-            for w in workers:
+            return workers if isinstance(workers, list) else []
+        except Exception:
+            return []
+
+    def list_workers(self):
+        """List all registered workers in the network (prints to console)."""
+        workers = self.get_workers()
+        if not workers:
+            print("❌ Error listing workers")
+            return
+        my_worker_id = self.identity.get_worker_id()
+        print(f"\n🖥️  Workers in network: {len(workers)}")
+        for w in workers:
                 status_emoji = "✅" if w['status'] == 'idle' else ("🔄" if w['status'] == 'busy' else "⚫")
                 owner = w.get('owner_id', 'unknown')
                 is_you = " (YOU)" if w['id'] == my_worker_id else ""
                 print(f"  {status_emoji} {w['id'][:12]}... - {w['status']} - Owner: {owner}{is_you}")
-            print()
-            
-        except Exception as e:
-            print(f"❌ Error listing workers: {e}")
+        print()
     
     def show_status(self):
         """Show worker connection status."""
