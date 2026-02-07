@@ -241,9 +241,10 @@ def db_upsert_worker(
     ip: str,
     caps: Dict[str, Any],
     status: str,
-    owner_id: str = ""
+    owner_id: str = "",
+    auth_token: str = ""
 ) -> None:
-    """Insert or update worker"""
+    """Insert or update worker. If auth_token provided, also register user credentials."""
     import json
     
     if not validate_uuid(worker_id):
@@ -262,6 +263,11 @@ def db_upsert_worker(
         """,
         (worker_id, owner_id, ip, json.dumps(caps), status, now(), now())
     )
+    
+    # If auth_token provided, register or update user credentials in user_auth table
+    if auth_token and owner_id:
+        db_register_user_auth(owner_id, auth_token)
+    
     conn.commit()
     logger.info(f"Worker upserted: {worker_id}")
 
@@ -503,6 +509,29 @@ def db_verify_worker_auth(worker_id: str, auth_token: str) -> bool:
         return bool(row and row["auth_token"] == auth_token)
     except Exception as e:
         logger.error(f"db_verify_worker_auth failed: {e}")
+        return False
+
+
+def db_register_user_auth(user_id: str, auth_token: str) -> bool:
+    """Register or update user credentials in user_auth table."""
+    try:
+        if not user_id or not auth_token:
+            return False
+        conn = get_db()
+        conn.execute(
+            """
+            INSERT INTO user_auth (user_id, auth_token, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                auth_token=excluded.auth_token
+            """,
+            (user_id, auth_token, now())
+        )
+        conn.commit()
+        logger.info(f"User credentials registered: {user_id}")
+        return True
+    except Exception as e:
+        logger.error(f"db_register_user_auth failed: {e}")
         return False
 
 
