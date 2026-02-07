@@ -12,8 +12,9 @@ from typing import Optional, Callable, Any, List, Dict
 import customtkinter as ctk
 
 from .theme import (
-    BG_DARK, BG_PANEL, BG_DARKEST, GREEN, GREEN_DIM, GREEN_BRIGHT, GREEN_GLOW,
-    AMBER, CYAN, MAGENTA, RED, RED_BRIGHT, GRAY, GRAY_DARK, GRAY_LIGHT,
+    BG_DARK, BG_PANEL, BG_DARKEST, GREEN, GREEN_DIM, GREEN_BRIGHT, GREEN_GLOW, GREEN_NEON,
+    AMBER, CYAN, MAGENTA, RED, RED_BRIGHT, RED_BORDER, GRAY, GRAY_DARK, GRAY_LIGHT,
+    TAB_SELECTED_BG, TAB_SELECTED_HOVER_BG,
     TERMINAL_FONT, TERMINAL_FONT_SMALL, TERMINAL_FONT_LARGE, TERMINAL_FONT_MEGA,
     ANIM_CURSOR_BLINK, ANIM_PULSE_FAST, ANIM_PULSE_SLOW,
 )
@@ -45,14 +46,26 @@ class DashboardFrame(ctk.CTkFrame):
         self.loop = loop
         self.on_quit = on_quit
         self._refresh_job = None
+        self._data_refresh_job = None  # 15s refresh for credits, workers, job history
         self._shutting_down = False
         self._idle_workers = None
         self._cursor_blink = True
         self._pulse_step = 0
         self._tab_glow = 0
-        self._status_chars = ["[*]", "[+]", "[◉]", "[●]"]
+        self._status_chars = ["[*]", "[+]", "[◉]", "[●]", "[·]"]
+        self._log_prompt_tick = 0
+        self._submit_source_tick = 0
+        self._submit_output_tick = 0
+        self._jobs_queue_tick = 0
+        self._jobs_output_tick = 0
         self._idle_pulse = 0
         self._anim_running = True
+        self._submit_output_awaiting = False  # True when output shows "Awaiting execution..."
+        self._submit_await_cursor = False
+        self._execute_btn_pulse = 0
+        self._refresh_btn_pulse = 0
+        self._jobs_empty_label = None
+        self._jobs_empty_cursor = False
 
         self._build_ui()
         self._start_refresh()
@@ -62,15 +75,15 @@ class DashboardFrame(ctk.CTkFrame):
 
     def _build_ui(self):
         """Build the dashboard UI - terminal style."""
-        # Decorative top scan line
+        # Decorative top scan line (slightly dimmed to match terminal neon)
         top_border = ctk.CTkFrame(
-            self, fg_color=GREEN_DIM, height=2, corner_radius=0
+            self, fg_color=GREEN_NEON, height=2, corner_radius=0
         )
-        top_border.pack(fill="x", pady=(0, 2))
+        top_border.pack(fill="x", pady=(0, 4))
         
         # Header row: title left, idle workers right
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.pack(fill="x", pady=(0, 10))
+        header_frame.pack(fill="x", pady=(0, 12))
 
         title = ctk.CTkLabel(
             header_frame,
@@ -94,39 +107,42 @@ class DashboardFrame(ctk.CTkFrame):
         )
         self._idle_label.pack(padx=12, pady=6)
 
-        # Tabs - styled for terminal
+        # Tabs - selected tab has visible green-tint background, text stays bright and readable
         self._tabview = ctk.CTkTabview(
             self,
             fg_color=BG_PANEL,
             segmented_button_fg_color=BG_DARK,
-            segmented_button_selected_color=GREEN_DIM,
-            segmented_button_selected_hover_color=GREEN_DIM,
+            segmented_button_selected_color=TAB_SELECTED_BG,
+            segmented_button_selected_hover_color=TAB_SELECTED_HOVER_BG,
             segmented_button_unselected_color=BG_DARK,
             segmented_button_unselected_hover_color=BG_PANEL,
             text_color=GREEN,
             text_color_disabled=GRAY,
         )
-        self._tabview.pack(fill="both", expand=True, pady=(0, 10))
+        self._tabview.pack(fill="both", expand=True, pady=(0, 12))
 
-        self._tab_status = self._tabview.add("[ ◆ STATUS ]")
-        self._tab_submit = self._tabview.add("[ ◆ SUBMIT JOB ]")
-        self._tab_jobs = self._tabview.add("[ ◆ JOB HISTORY ]")
+        self._tab_status = self._tabview.add("[ STATUS ]")
+        self._tab_submit = self._tabview.add("[ SUBMIT JOB ]")
+        self._tab_jobs = self._tabview.add("[ JOB HISTORY ]")
 
         self._build_status_tab()
         self._build_submit_tab()
         self._build_jobs_tab()
 
-        # Quit - terminal style with proper hover (text stays visible)
+        # Quit - terminal style; X character renders reliably on all systems; darker border
         self._terminate_btn = ctk.CTkButton(
-            self, text="[ ◼ TERMINATE ]",
+            self, text="[ X TERMINATE ]",
             command=self._on_quit, width=160, height=36,
             font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
-            fg_color=BG_PANEL, text_color=RED_BRIGHT, 
-            border_width=2, border_color=RED,
+            fg_color=BG_PANEL, text_color=RED_BRIGHT,
+            border_width=2, border_color=RED_BORDER,
             hover_color=BG_DARKEST, hover=True,
             corner_radius=0,
         )
-        self._terminate_btn.pack(pady=(10, 0))
+        # Subtle separator above terminate
+        sep = ctk.CTkFrame(self, fg_color=GRAY_DARK, height=1, corner_radius=0)
+        sep.pack(fill="x", pady=(8, 6))
+        self._terminate_btn.pack(pady=(0, 4))
 
     def _build_status_tab(self):
         """Status tab - terminal style."""
@@ -174,27 +190,29 @@ class DashboardFrame(ctk.CTkFrame):
         )
         self._resume_btn.pack(side="left")
 
-        ctk.CTkLabel(
+        self._log_prompt_label = ctk.CTkLabel(
             self._tab_status, text="> LOG:", font=TERMINAL_FONT,
             text_color=GREEN_DIM,
-        ).pack(anchor="w", pady=(15, 5))
+        )
+        self._log_prompt_label.pack(anchor="w", pady=(15, 5))
         self._activity_text = ctk.CTkTextbox(
             self._tab_status, height=200, state="disabled", wrap="word",
             font=ctk.CTkFont(family="Consolas", size=13),
-            fg_color=BG_PANEL, text_color=GREEN, border_width=2, border_color=GREEN, corner_radius=0,
+            fg_color=BG_PANEL, text_color=GREEN, border_width=2, border_color=GREEN_NEON, corner_radius=0,
         )
         self._activity_text.pack(fill="both", expand=True, pady=(0, 10))
 
     def _build_submit_tab(self):
         """Submit job tab - terminal style."""
         self._tab_submit.configure(fg_color=BG_DARK)
-        ctk.CTkLabel(
+        self._submit_source_label = ctk.CTkLabel(
             self._tab_submit, text="> SOURCE:", font=TERMINAL_FONT, text_color=GREEN_DIM,
-        ).pack(anchor="w", pady=(0, 5))
+        )
+        self._submit_source_label.pack(anchor="w", pady=(0, 5))
         self._code_text = ctk.CTkTextbox(
             self._tab_submit, height=120, wrap="word",
             font=ctk.CTkFont(family="Consolas", size=14),
-            fg_color=BG_PANEL, text_color=GREEN, border_width=2, border_color=GREEN, corner_radius=0,
+            fg_color=BG_PANEL, text_color=GREEN, border_width=2, border_color=GREEN_NEON, corner_radius=0,
         )
         self._code_text.pack(fill="x", pady=(0, 10))
         self._code_text.insert("1.0", "# EXECUTE REMOTE\nprint('Hello from Grid-X!')")
@@ -225,6 +243,7 @@ class DashboardFrame(ctk.CTkFrame):
             fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN,
         )
         self._submit_btn.pack(side="left")
+        self._execute_btn_base_border = GREEN
 
         self._submit_status = ctk.CTkLabel(
             self._tab_submit, text="", font=TERMINAL_FONT_SMALL,
@@ -232,13 +251,14 @@ class DashboardFrame(ctk.CTkFrame):
         )
         self._submit_status.pack(anchor="w", pady=(5, 0))
 
-        ctk.CTkLabel(
+        self._submit_output_label = ctk.CTkLabel(
             self._tab_submit, text="> OUTPUT:", font=TERMINAL_FONT, text_color=GREEN_DIM,
-        ).pack(anchor="w", pady=(15, 5))
+        )
+        self._submit_output_label.pack(anchor="w", pady=(15, 5))
         self._submit_output = ctk.CTkTextbox(
             self._tab_submit, height=150, state="disabled", wrap="word",
             font=ctk.CTkFont(family="Consolas", size=13),
-            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_DIM,
+            fg_color=BG_PANEL, text_color=GREEN, border_width=1, border_color=GREEN_NEON,
         )
         self._submit_output.pack(fill="both", expand=True, pady=(0, 10))
         self._show_submit_output("> Awaiting execution...")
@@ -325,6 +345,9 @@ class DashboardFrame(ctk.CTkFrame):
 
     def _show_submit_output(self, text: str):
         """Display text in the Submit Job results area."""
+        self._submit_output_awaiting = (
+            text.strip().startswith("> Awaiting") or text.strip().startswith("> Waiting")
+        )
         self._submit_output.configure(state="normal")
         self._submit_output.delete("1.0", "end")
         self._submit_output.insert("1.0", text)
@@ -379,12 +402,16 @@ class DashboardFrame(ctk.CTkFrame):
         self._tab_jobs.configure(fg_color=BG_DARK)
         top_row = ctk.CTkFrame(self._tab_jobs, fg_color="transparent")
         top_row.pack(fill="x", pady=(0, 5))
-        ctk.CTkLabel(top_row, text="> JOB QUEUE:", font=TERMINAL_FONT, text_color=GREEN_DIM).pack(side="left")
-        ctk.CTkButton(
+        self._jobs_queue_label = ctk.CTkLabel(
+            top_row, text="> JOB QUEUE:", font=TERMINAL_FONT, text_color=GREEN_DIM
+        )
+        self._jobs_queue_label.pack(side="left")
+        self._jobs_refresh_btn = ctk.CTkButton(
             top_row, text="[ ⟳ REFRESH ]", width=100, font=TERMINAL_FONT_SMALL,
             command=self._update_jobs_list,
             fg_color=BG_PANEL, text_color=GREEN_DIM, border_width=1, border_color=GREEN_DIM,
-        ).pack(side="right")
+        )
+        self._jobs_refresh_btn.pack(side="right")
 
         self._jobs_frame = ctk.CTkScrollableFrame(
             self._tab_jobs, height=120,
@@ -392,13 +419,14 @@ class DashboardFrame(ctk.CTkFrame):
         )
         self._jobs_frame.pack(fill="x", pady=(0, 10))
 
-        ctk.CTkLabel(
+        self._jobs_output_label = ctk.CTkLabel(
             self._tab_jobs, text="> OUTPUT (select job):", font=TERMINAL_FONT, text_color=GREEN_DIM,
-        ).pack(anchor="w", pady=(5, 5))
+        )
+        self._jobs_output_label.pack(anchor="w", pady=(5, 5))
         self._output_text = ctk.CTkTextbox(
             self._tab_jobs, height=150, state="disabled", wrap="word",
             font=ctk.CTkFont(family="Consolas", size=13),
-            fg_color=BG_PANEL, text_color=GREEN, border_width=2, border_color=GREEN, corner_radius=0,
+            fg_color=BG_PANEL, text_color=GREEN, border_width=2, border_color=GREEN_NEON, corner_radius=0,
         )
         self._output_text.pack(fill="both", expand=True, pady=(0, 10))
 
@@ -423,13 +451,15 @@ class DashboardFrame(ctk.CTkFrame):
             w.destroy()
 
         if not jobs:
-            ctk.CTkLabel(
+            self._jobs_empty_label = ctk.CTkLabel(
                 self._jobs_frame,
-                text="> No jobs. Run [ SUBMIT ] tab.",
+                text="> No jobs. Run [ SUBMIT ] tab._",
                 font=TERMINAL_FONT_SMALL,
                 text_color=GRAY,
-            ).pack(anchor="w")
+            )
+            self._jobs_empty_label.pack(anchor="w")
             return
+        self._jobs_empty_label = None
 
         for j in jobs[:30]:
             job_id = j.get("job_id") or j.get("id", "?")
@@ -499,16 +529,30 @@ class DashboardFrame(ctk.CTkFrame):
             self._output_text.insert("1.0", "\n".join(lines))
         self._output_text.configure(state="disabled")
 
+    DATA_REFRESH_INTERVAL_MS = 15_000  # 15 seconds for credits, idle workers, job history
+
     def _start_refresh(self):
-        """Start periodic UI refresh."""
+        """Start periodic UI refresh (fast for status, 15s for data)."""
         self._do_refresh()
+        self._schedule_data_refresh()
 
     def _do_refresh(self):
-        """Periodic refresh: only status, activity, pause buttons (local state). Credits and jobs only on manual Refresh."""
+        """Periodic refresh: status, activity, pause buttons (every 2s)."""
+        if self._shutting_down:
+            return
         self._update_status()
         self._update_activity()
         self._update_pause_buttons()
         self._refresh_job = self.after(2000, self._do_refresh)
+
+    def _schedule_data_refresh(self):
+        """Refresh credits, idle workers, and job history every 15 seconds."""
+        if self._shutting_down:
+            return
+        self._update_credits()
+        self._update_workers()
+        self._update_jobs_list()
+        self._data_refresh_job = self.after(self.DATA_REFRESH_INTERVAL_MS, self._schedule_data_refresh)
 
     def _update_status(self):
         """Update connection status display."""
@@ -548,10 +592,17 @@ class DashboardFrame(ctk.CTkFrame):
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _start_animations(self):
-        """Start blinking cursor and status pulse animations."""
+        """Start blinking cursor, status pulse, and subtle prompt animations."""
         self._animate_cursor()
         self._animate_status_pulse()
         self._animate_idle_glow()
+        self._animate_log_prompt()
+        self._animate_submit_prompts()
+        self._animate_jobs_prompts()
+        self._animate_submit_await_cursor()
+        self._animate_execute_button()
+        self._animate_refresh_button()
+        self._animate_jobs_empty_cursor()
 
     def _animate_cursor(self):
         """Blink cursor after idle count."""
@@ -563,14 +614,121 @@ class DashboardFrame(ctk.CTkFrame):
         self.after(500, self._animate_cursor)
 
     def _animate_status_pulse(self):
-        """Subtle pulse on status indicator when connected."""
+        """Subtle cycle on status indicator when connected (+ * ◉ ● ·)."""
         if self._shutting_down or not self._anim_running:
             return
         if self.worker.is_connected:
-            self._pulse_step = (self._pulse_step + 1) % 4
-            chars = self._status_chars
-            self._status_indicator.configure(text=chars[self._pulse_step], text_color=GREEN)
+            self._pulse_step = (self._pulse_step + 1) % len(self._status_chars)
+            self._status_indicator.configure(
+                text=self._status_chars[self._pulse_step], text_color=GREEN
+            )
         self.after(ANIM_PULSE_FAST, self._animate_status_pulse)
+
+    def _animate_log_prompt(self):
+        """Very subtle '>' / '»' toggle on LOG label so it feels alive."""
+        if self._shutting_down or not self._anim_running:
+            return
+        self._log_prompt_tick = (self._log_prompt_tick + 1) % 2
+        try:
+            self._log_prompt_label.configure(
+                text="» LOG:" if self._log_prompt_tick else "> LOG:"
+            )
+        except Exception:
+            pass
+        self.after(1200, self._animate_log_prompt)
+
+    def _animate_submit_prompts(self):
+        """Subtle >/» on Submit tab SOURCE and OUTPUT labels."""
+        if self._shutting_down or not self._anim_running:
+            return
+        self._submit_source_tick = (self._submit_source_tick + 1) % 2
+        self._submit_output_tick = (self._submit_output_tick + 1) % 2
+        try:
+            self._submit_source_label.configure(
+                text="» SOURCE:" if self._submit_source_tick else "> SOURCE:"
+            )
+            self._submit_output_label.configure(
+                text="» OUTPUT:" if self._submit_output_tick else "> OUTPUT:"
+            )
+        except Exception:
+            pass
+        self.after(1300, self._animate_submit_prompts)
+
+    def _animate_jobs_prompts(self):
+        """Subtle >/» on Job History tab labels."""
+        if self._shutting_down or not self._anim_running:
+            return
+        self._jobs_queue_tick = (self._jobs_queue_tick + 1) % 2
+        self._jobs_output_tick = (self._jobs_output_tick + 1) % 2
+        try:
+            self._jobs_queue_label.configure(
+                text="» JOB QUEUE:" if self._jobs_queue_tick else "> JOB QUEUE:"
+            )
+            self._jobs_output_label.configure(
+                text="» OUTPUT (select job):" if self._jobs_output_tick else "> OUTPUT (select job):"
+            )
+        except Exception:
+            pass
+        self.after(1400, self._animate_jobs_prompts)
+
+    def _animate_submit_await_cursor(self):
+        """Blink cursor in Submit output when showing 'Awaiting execution...'."""
+        if self._shutting_down or not self._anim_running:
+            return
+        try:
+            if self._submit_output_awaiting:
+                self._submit_output.configure(state="normal")
+                content = self._submit_output.get("1.0", "end-1c").rstrip()
+                base = content.rstrip("_ ")
+                cursor = "_" if self._submit_await_cursor else " "
+                self._submit_output.delete("1.0", "end")
+                self._submit_output.insert("1.0", base + cursor)
+                self._submit_output.configure(state="disabled")
+                self._submit_await_cursor = not self._submit_await_cursor
+        except Exception:
+            pass
+        self.after(550, self._animate_submit_await_cursor)
+
+    def _animate_execute_button(self):
+        """Very subtle border pulse on [ EXECUTE ] when enabled."""
+        if self._shutting_down or not self._anim_running:
+            return
+        try:
+            if self._submit_btn.cget("state") == "normal":
+                self._execute_btn_pulse = (self._execute_btn_pulse + 1) % 2
+                self._submit_btn.configure(
+                    border_color=GREEN_DIM if self._execute_btn_pulse else GREEN
+                )
+        except Exception:
+            pass
+        self.after(2000, self._animate_execute_button)
+
+    def _animate_refresh_button(self):
+        """Very subtle border pulse on [ REFRESH ] in Job History."""
+        if self._shutting_down or not self._anim_running:
+            return
+        try:
+            self._refresh_btn_pulse = (self._refresh_btn_pulse + 1) % 2
+            self._jobs_refresh_btn.configure(
+                border_color=GREEN_DIM if self._refresh_btn_pulse else GREEN,
+            )
+        except Exception:
+            pass
+        self.after(2500, self._animate_refresh_button)
+
+    def _animate_jobs_empty_cursor(self):
+        """Blink cursor on 'No jobs' message when list is empty."""
+        if self._shutting_down or not self._anim_running:
+            return
+        try:
+            if self._jobs_empty_label is not None:
+                self._jobs_empty_cursor = not self._jobs_empty_cursor
+                self._jobs_empty_label.configure(
+                    text="> No jobs. Run [ SUBMIT ] tab._" if self._jobs_empty_cursor else "> No jobs. Run [ SUBMIT ] tab. "
+                )
+        except Exception:
+            pass
+        self.after(600, self._animate_jobs_empty_cursor)
 
     def _refresh_credits(self):
         """Manually refresh credits and worker count (when Refresh button clicked)."""
@@ -636,6 +794,12 @@ class DashboardFrame(ctk.CTkFrame):
             except Exception:
                 pass
             self._refresh_job = None
+        if self._data_refresh_job:
+            try:
+                self.after_cancel(self._data_refresh_job)
+            except Exception:
+                pass
+            self._data_refresh_job = None
 
         if self.worker and not self.worker.is_paused():
             self.worker.pause()

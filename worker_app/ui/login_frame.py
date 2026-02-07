@@ -46,6 +46,9 @@ class LoginFrame(ctk.CTkFrame):
         self._scan_line_y = 0
         self._title_blink = True
         self._border_pulse = 0
+        self._cursor_base = "> INITIALIZING SECURE CONNECTION..."
+        self._prompt_step = 0  # for ► / > / » cycle
+        self._prompt_labels = []  # refs to form prompt labels
 
         self._build_ui()
         self._start_animations()
@@ -72,10 +75,10 @@ class LoginFrame(ctk.CTkFrame):
         )
         self._header.pack(pady=16, padx=10)
         
-        # Blinking cursor indicator
+        # Blinking cursor: "> ..." with block at end (█ / space)
         self._cursor_label = ctk.CTkLabel(
             title_container,
-            text="█ INITIALIZING SECURE CONNECTION...",
+            text="> INITIALIZING SECURE CONNECTION... █",
             font=TERMINAL_FONT_SMALL,
             text_color=CYAN,
         )
@@ -91,17 +94,17 @@ class LoginFrame(ctk.CTkFrame):
         inner_form = ctk.CTkFrame(form_frame, fg_color="transparent")
         inner_form.pack(padx=20, pady=20, fill="both", expand=True)
 
-        # Username with animated label
+        # Username with animated prompt (► / > / »)
         user_label_frame = ctk.CTkFrame(inner_form, fg_color="transparent")
         user_label_frame.pack(anchor="w", pady=(8, 0), fill="x")
-        
-        ctk.CTkLabel(
-            user_label_frame, text="►", 
+        self._prompt_user = ctk.CTkLabel(
+            user_label_frame, text="►",
             font=TERMINAL_FONT, text_color=GREEN_BRIGHT
-        ).pack(side="left", padx=(0, 5))
-        
+        )
+        self._prompt_user.pack(side="left", padx=(0, 5))
+        self._prompt_labels.append(self._prompt_user)
         ctk.CTkLabel(
-            user_label_frame, text="USER_ID:", 
+            user_label_frame, text="USER_ID:",
             font=TERMINAL_FONT, text_color=GREEN_DIM
         ).pack(side="left")
         
@@ -113,17 +116,17 @@ class LoginFrame(ctk.CTkFrame):
         )
         self._username.pack(pady=(4, 12), fill="x")
 
-        # Password with animated label
+        # Password with animated prompt
         pass_label_frame = ctk.CTkFrame(inner_form, fg_color="transparent")
         pass_label_frame.pack(anchor="w", pady=(8, 0), fill="x")
-        
-        ctk.CTkLabel(
-            pass_label_frame, text="►", 
+        self._prompt_pass = ctk.CTkLabel(
+            pass_label_frame, text="►",
             font=TERMINAL_FONT, text_color=GREEN_BRIGHT
-        ).pack(side="left", padx=(0, 5))
-        
+        )
+        self._prompt_pass.pack(side="left", padx=(0, 5))
+        self._prompt_labels.append(self._prompt_pass)
         ctk.CTkLabel(
-            pass_label_frame, text="PASSWORD:", 
+            pass_label_frame, text="PASSWORD:",
             font=TERMINAL_FONT, text_color=GREEN_DIM
         ).pack(side="left")
         
@@ -135,17 +138,17 @@ class LoginFrame(ctk.CTkFrame):
         )
         self._password.pack(pady=(4, 12), fill="x")
 
-        # Coordinator with animated label
+        # Coordinator with animated prompt
         coord_label_frame = ctk.CTkFrame(inner_form, fg_color="transparent")
         coord_label_frame.pack(anchor="w", pady=(8, 0), fill="x")
-        
-        ctk.CTkLabel(
-            coord_label_frame, text="►", 
+        self._prompt_coord = ctk.CTkLabel(
+            coord_label_frame, text="►",
             font=TERMINAL_FONT, text_color=GREEN_BRIGHT
-        ).pack(side="left", padx=(0, 5))
-        
+        )
+        self._prompt_coord.pack(side="left", padx=(0, 5))
+        self._prompt_labels.append(self._prompt_coord)
         ctk.CTkLabel(
-            coord_label_frame, text="COORDINATOR_URL:", 
+            coord_label_frame, text="COORDINATOR_URL:",
             font=TERMINAL_FONT, text_color=GREEN_DIM
         ).pack(side="left")
         
@@ -232,23 +235,37 @@ class LoginFrame(ctk.CTkFrame):
         self.after(100, self._check_docker)
 
     def _start_animations(self):
-        """Start all UI animations."""
+        """Start all UI animations (cursor blink, prompt cycle, border pulse)."""
         self._animate_title_blink()
         self._animate_border_pulse()
+        self._animate_prompt()
 
     def _animate_title_blink(self):
-        """Blink the cursor in the title."""
+        """Blink cursor bar at end of status line (> ... █ / > ... _)."""
         if not self._anim_running:
             return
-        
-        if self._title_blink:
-            text = "█ INITIALIZING SECURE CONNECTION..."
-        else:
-            text = "  INITIALIZING SECURE CONNECTION..."
-        
-        self._cursor_label.configure(text=text)
+        base = getattr(self, "_cursor_base", "> INITIALIZING SECURE CONNECTION...")
+        cursor_char = "█" if self._title_blink else "_"
+        try:
+            self._cursor_label.configure(text=base + " " + cursor_char)
+        except Exception:
+            pass
         self._title_blink = not self._title_blink
         self.after(ANIM_CURSOR_BLINK, self._animate_title_blink)
+
+    def _animate_prompt(self):
+        """Subtle cycle ► / > / » on form labels."""
+        if not self._anim_running:
+            return
+        self._prompt_step = (self._prompt_step + 1) % 3
+        chars = ["►", ">", "»"]
+        c = chars[self._prompt_step]
+        for lbl in getattr(self, "_prompt_labels", []):
+            try:
+                lbl.configure(text=c)
+            except Exception:
+                pass
+        self.after(1100, self._animate_prompt)
 
     def _animate_border_pulse(self):
         """Pulse the main border color."""
@@ -293,29 +310,25 @@ class LoginFrame(ctk.CTkFrame):
         """Handle Docker check result on main thread."""
         if available:
             self._docker_label.configure(
-                text="[ ✓ ] Docker daemon ONLINE", 
+                text="[ ✓ ] Docker daemon ONLINE",
                 text_color=GREEN_BRIGHT
             )
             self._start_btn.configure(state="normal")
             self._docker_error.pack_forget()
             self._docker_link_frame.pack_forget()
-            self._cursor_label.configure(
-                text="█ READY TO CONNECT",
-                text_color=GREEN_BRIGHT
-            )
+            self._cursor_base = "> READY TO CONNECT"
+            self._cursor_label.configure(text_color=GREEN_BRIGHT)
         else:
             self._docker_label.configure(
-                text="[ ✗ ] Docker daemon OFFLINE", 
+                text="[ ✗ ] Docker daemon OFFLINE",
                 text_color=RED_BRIGHT
             )
             self._docker_error.pack(pady=(5, 2))
             self._docker_link_frame.pack(pady=(0, 10))
             self._docker_link.bind("<Button-1>", lambda e: self._open_docker_url())
             self._start_btn.configure(state="disabled")
-            self._cursor_label.configure(
-                text="█ DOCKER REQUIRED",
-                text_color=RED
-            )
+            self._cursor_base = "> DOCKER REQUIRED"
+            self._cursor_label.configure(text_color=RED)
 
     def _open_docker_url(self):
         """Open Docker Desktop download URL in browser."""
@@ -336,18 +349,16 @@ class LoginFrame(ctk.CTkFrame):
             return
 
         self._start_btn.configure(
-            state="disabled", 
+            state="disabled",
             text="[ ◉ CONNECTING... ]",
             border_color=AMBER
         )
         self._status.configure(
-            text="[ ◉ ] Establishing secure link...", 
+            text="[ ◉ ] Establishing secure link...",
             text_color=CYAN
         )
-        self._cursor_label.configure(
-            text="█ HANDSHAKE IN PROGRESS...",
-            text_color=AMBER
-        )
+        self._cursor_base = "> HANDSHAKE IN PROGRESS..."
+        self._cursor_label.configure(text_color=AMBER)
 
         def _run_worker():
             try:
