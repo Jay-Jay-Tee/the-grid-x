@@ -2,6 +2,7 @@
 Resource Monitor - Tracks CPU, GPU, memory, storage, and bandwidth metrics
 """
 
+import os
 import psutil
 import time
 import asyncio
@@ -129,7 +130,9 @@ class ResourceMonitor:
     
     def get_storage_metrics(self) -> Dict[str, Any]:
         """Get storage metrics"""
-        disk = psutil.disk_usage('/')
+        # Use appropriate root path for the platform (Windows needs drive letter)
+        root_path = (os.environ.get('SystemDrive', 'C:') + os.sep) if os.name == 'nt' else '/'
+        disk = psutil.disk_usage(root_path)
         return {
             'total_gb': round(disk.total / (1024 ** 3), 2),
             'available_gb': round(disk.free / (1024 ** 3), 2),

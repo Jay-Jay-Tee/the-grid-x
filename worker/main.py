@@ -257,158 +257,158 @@ class HybridWorker:
                         await asyncio.sleep(reconnect_delay)
                         reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
                         continue
-                
-                # Reset reconnect delay on successful ping
-                reconnect_delay = 5
-                
-                async with websockets.connect(
-                    self.coordinator_ws,
-                    ping_interval=20,
-                    ping_timeout=20,
-                    close_timeout=15,
-                ) as ws:
-                    # Send hello with authentication
-                    try:
-                        await ws.send(json.dumps({
-                            "type": "hello",
-                            "worker_id": worker_id,
-                            "owner_id": self.user_id,
-                            "auth_token": auth_token,
-                            "caps": caps,
-                        }))
-                        
-                        # Wait for acknowledgment (increased timeout to allow coordinator more time)
-                        ack_msg = await asyncio.wait_for(ws.recv(), timeout=30)
-                        ack = json.loads(ack_msg)
-                    except asyncio.TimeoutError:
-                        print(f"⚠️  Handshake timeout - coordinator not responding within 30 seconds")
-                        self.activity_log.add_entry("Timeout", "Handshake timeout with coordinator")
-                        await asyncio.sleep(reconnect_delay)
-                        continue
-                    except Exception as e:
-                        print(f"⚠️  Error during handshake: {e}")
-                        self.activity_log.add_entry("Handshake Error", str(e)[:50])
-                        await asyncio.sleep(reconnect_delay)
-                        continue
-                    
-                    # Check for authentication error
-                    if ack.get("type") == "auth_error":
-                        print(f"\n{'='*60}")
-                        print(f"❌ AUTHENTICATION FAILED")
-                        print(f"{'='*60}")
-                        print(f"\n{ack.get('error', 'Invalid credentials')}\n")
-                        print(f"This username already exists with a different password.")
-                        print(f"Please use the correct password or choose a different username.")
-                        print(f"\n{'='*60}\n")
-                        self.activity_log.add_entry("Auth Failed", ack.get('error', 'Invalid credentials'))
-                        # Raise exception to trigger cleanup and prevent CLI from starting
-                        raise RuntimeError("Authentication failed - invalid credentials")
-                    
-                    if ack.get("type") == "hello_ack":
-                        if not self.is_connected:
-                            print(f"✅ Connected to coordinator")
-                            print(f"   You're now earning credits when jobs run on your worker!\n")
-                            self.activity_log.add_entry("Connected", "Worker registered with coordinator")
-                        
-                        self.is_connected = True
-                        self.connection_attempts = 0
-                        self.last_heartbeat = time.time()
 
-                        # Start periodic heartbeat to coordinator to keep DB last_heartbeat fresh
-                        async def _hb_loop(ws, interval: int = 10):
-                            try:
-                                while True:
-                                    await asyncio.sleep(interval)
-                                    try:
-                                        await ws.send(json.dumps({"type": "hb", "ts": time.time()}))
-                                    except Exception:
-                                        return
-                            except asyncio.CancelledError:
-                                return
+                    # Reset reconnect delay on successful ping
+                    reconnect_delay = 5
 
-                        hb_task = asyncio.create_task(_hb_loop(ws))
-                        
-                        # Handle messages
-                        async for raw in ws:
-                            try:
-                                msg = json.loads(raw)
-                            except Exception:
-                                continue
-                            
-                            t = msg.get("type")
-                            if not t:
-                                continue
-                            
-                            # Update heartbeat
-                            self.last_heartbeat = time.time()
-                            
-                            if t == "hello_ack":
-                                continue
-                            
-                            if t == "assign_job":
-                                job_id = msg["job"]["job_id"]
-                                self.activity_log.add_entry("Job Assigned", f"ID: {job_id[:8]}...")
-                                
-                                await ws.send(json.dumps({
-                                    "type": "job_started",
-                                    "job_id": job_id,
-                                }))
-                                
-                                await handle_assign_job(msg, ws, executor, task_queue)
-                                self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
-                        
-                        # Ensure heartbeat task is cancelled when websocket context exits
+                    async with websockets.connect(
+                        self.coordinator_ws,
+                        ping_interval=20,
+                        ping_timeout=20,
+                        close_timeout=15,
+                    ) as ws:
+                        # Send hello with authentication
                         try:
-                            if 'hb_task' in locals() and hb_task is not None:
-                                hb_task.cancel()
-                        except Exception:
-                            pass
+                            await ws.send(json.dumps({
+                                "type": "hello",
+                                "worker_id": worker_id,
+                                "owner_id": self.user_id,
+                                "auth_token": auth_token,
+                                "caps": caps,
+                            }))
+
+                            # Wait for acknowledgment (increased timeout to allow coordinator more time)
+                            ack_msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                            ack = json.loads(ack_msg)
+                        except asyncio.TimeoutError:
+                            print(f"⚠️  Handshake timeout - coordinator not responding within 30 seconds")
+                            self.activity_log.add_entry("Timeout", "Handshake timeout with coordinator")
+                            await asyncio.sleep(reconnect_delay)
+                            continue
+                        except Exception as e:
+                            print(f"⚠️  Error during handshake: {e}")
+                            self.activity_log.add_entry("Handshake Error", str(e)[:50])
+                            await asyncio.sleep(reconnect_delay)
+                            continue
+
+                        # Check for authentication error
+                        if ack.get("type") == "auth_error":
+                            print(f"\n{'='*60}")
+                            print(f"❌ AUTHENTICATION FAILED")
+                            print(f"{'='*60}")
+                            print(f"\n{ack.get('error', 'Invalid credentials')}\n")
+                            print(f"This username already exists with a different password.")
+                            print(f"Please use the correct password or choose a different username.")
+                            print(f"\n{'='*60}\n")
+                            self.activity_log.add_entry("Auth Failed", ack.get('error', 'Invalid credentials'))
+                            # Raise exception to trigger cleanup and prevent CLI from starting
+                            raise RuntimeError("Authentication failed - invalid credentials")
+
+                        if ack.get("type") == "hello_ack":
+                            if not self.is_connected:
+                                print(f"✅ Connected to coordinator")
+                                print(f"   You're now earning credits when jobs run on your worker!\n")
+                                self.activity_log.add_entry("Connected", "Worker registered with coordinator")
+
+                            self.is_connected = True
+                            self.connection_attempts = 0
+                            self.last_heartbeat = time.time()
+
+                            # Start periodic heartbeat to coordinator to keep DB last_heartbeat fresh
+                            async def _hb_loop(ws, interval: int = 10):
+                                try:
+                                    while True:
+                                        await asyncio.sleep(interval)
+                                        try:
+                                            await ws.send(json.dumps({"type": "hb", "ts": time.time()}))
+                                        except Exception:
+                                            return
+                                except asyncio.CancelledError:
+                                    return
+
+                            hb_task = asyncio.create_task(_hb_loop(ws))
+
+                            # Handle messages
+                            async for raw in ws:
+                                try:
+                                    msg = json.loads(raw)
+                                except Exception:
+                                    continue
+
+                                t = msg.get("type")
+                                if not t:
+                                    continue
+
+                                # Update heartbeat
+                                self.last_heartbeat = time.time()
+
+                                if t == "hello_ack":
+                                    continue
+
+                                if t == "assign_job":
+                                    job_id = msg["job"]["job_id"]
+                                    self.activity_log.add_entry("Job Assigned", f"ID: {job_id[:8]}...")
+
+                                    await ws.send(json.dumps({
+                                        "type": "job_started",
+                                        "job_id": job_id,
+                                    }))
+
+                                    await handle_assign_job(msg, ws, executor, task_queue)
+                                    self.activity_log.add_entry("Job Completed", f"ID: {job_id[:8]}...")
+
+                            # Ensure heartbeat task is cancelled when websocket context exits
+                            try:
+                                if 'hb_task' in locals() and hb_task is not None:
+                                    hb_task.cancel()
+                            except Exception:
+                                pass
+                        else:
+                            print(f"❌ Invalid response from coordinator during handshake: {ack.get('type')}")
+                            self.activity_log.add_entry("Handshake Error", f"Invalid response: {ack.get('type')}")
+                            await asyncio.sleep(30)
+
+                except ws_exceptions.ConnectionClosed as e:
+                    self.is_connected = False
+                    if self.connection_attempts == 0:
+                        print(f"⚠️  Disconnected from coordinator. Reconnecting...")
+                        self.activity_log.add_entry("Disconnected", "Connection closed")
+                    await asyncio.sleep(reconnect_delay)
+                    self.connection_attempts += 1
+
+                except (ConnectionRefusedError, OSError) as e:
+                    self.is_connected = False
+                    if self.connection_attempts == 0:
+                        print(f"❌ Cannot connect to coordinator: {e}")
+                        print(f"   Retrying every {reconnect_delay}s...")
+                        self.activity_log.add_entry("Connection Error", str(e)[:50])
+                    await asyncio.sleep(reconnect_delay)
+                    self.connection_attempts += 1
+                    reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+
+                except asyncio.TimeoutError:
+                    self.is_connected = False
+                    print(f"⚠️  Connection timeout. Retrying...")
+                    self.activity_log.add_entry("Timeout", "No response from coordinator")
+                    await asyncio.sleep(reconnect_delay)
+
+                except RuntimeError as e:
+                    # Authentication failure - do not retry
+                    if "Authentication failed" in str(e):
+                        self.is_connected = False
+                        return  # Exit gracefully
                     else:
-                        print(f"❌ Invalid response from coordinator during handshake: {ack.get('type')}")
-                        self.activity_log.add_entry("Handshake Error", f"Invalid response: {ack.get('type')}")
-                        await asyncio.sleep(30)
-                        
-            except ws_exceptions.ConnectionClosed as e:
-                self.is_connected = False
-                if self.connection_attempts == 0:
-                    print(f"⚠️  Disconnected from coordinator. Reconnecting...")
-                    self.activity_log.add_entry("Disconnected", "Connection closed")
-                await asyncio.sleep(reconnect_delay)
-                self.connection_attempts += 1
-                
-            except (ConnectionRefusedError, OSError) as e:
-                self.is_connected = False
-                if self.connection_attempts == 0:
-                    print(f"❌ Cannot connect to coordinator: {e}")
-                    print(f"   Retrying every {reconnect_delay}s...")
-                    self.activity_log.add_entry("Connection Error", str(e)[:50])
-                await asyncio.sleep(reconnect_delay)
-                self.connection_attempts += 1
-                reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
-                
-            except asyncio.TimeoutError:
-                self.is_connected = False
-                print(f"⚠️  Connection timeout. Retrying...")
-                self.activity_log.add_entry("Timeout", "No response from coordinator")
-                await asyncio.sleep(reconnect_delay)
-                
-            except RuntimeError as e:
-                # Authentication failure - do not retry
-                if "Authentication failed" in str(e):
+                        # Other runtime errors - retry
+                        self.is_connected = False
+                        print(f"❌ Runtime error: {e}. Reconnecting...")
+                        self.activity_log.add_entry("Error", str(e)[:50])
+                        await asyncio.sleep(reconnect_delay)
+
+                except Exception as e:
                     self.is_connected = False
-                    return  # Exit gracefully
-                else:
-                    # Other runtime errors - retry
-                    self.is_connected = False
-                    print(f"❌ Runtime error: {e}. Reconnecting...")
+                    print(f"❌ Worker error: {e}. Reconnecting...")
                     self.activity_log.add_entry("Error", str(e)[:50])
                     await asyncio.sleep(reconnect_delay)
-                
-            except Exception as e:
-                self.is_connected = False
-                print(f"❌ Worker error: {e}. Reconnecting...")
-                self.activity_log.add_entry("Error", str(e)[:50])
-                await asyncio.sleep(reconnect_delay)
         
         except Exception as e:
             print(f"\n❌ FATAL ERROR IN WORKER PROCESS:")
