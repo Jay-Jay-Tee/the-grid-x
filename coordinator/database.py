@@ -144,6 +144,17 @@ def init_db() -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_worker ON jobs(worker_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workers_owner ON workers(owner_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status)")
+
+    # Migration: add duration_seconds to jobs (time-based credits)
+    try:
+        cur = conn.execute("PRAGMA table_info(jobs)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "duration_seconds" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN duration_seconds REAL")
+            conn.commit()
+            logger.info("Added duration_seconds to jobs")
+    except Exception as e:
+        logger.debug(f"Migration duration_seconds: {e}")
     
     conn.commit()
     logger.info("Database schema initialized")
@@ -158,9 +169,10 @@ def db_create_job(
     user_id: str,
     code: str,
     language: str,
-    limits: Dict[str, Any]
+    limits: Dict[str, Any],
+    reserved_cost: float = 1.0,
 ) -> None:
-    """Create a new job in database"""
+    """Create a new job in database. cost column stores reserved credits (refunded on settle)."""
     import json
     
     # Validate inputs
@@ -184,11 +196,11 @@ def db_create_job(
             STATUS_QUEUED,
             now(),
             json.dumps(limits),
-            1.0
+            max(0.0, float(reserved_cost)),
         )
     )
     conn.commit()
-    logger.info(f"Job created: {job_id} by {user_id}")
+    logger.info(f"Job created: {job_id} by {user_id} (reserved={reserved_cost})")
 
 
 def db_get_job(job_id: str) -> Optional[Dict[str, Any]]:

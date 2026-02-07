@@ -7,6 +7,7 @@ import os
 import tempfile
 import shutil
 import logging
+import time
 from typing import Dict, Callable, List
 from .task_queue import Task, TaskQueue
 from .docker_manager import DockerManager, ContainerConfig
@@ -95,6 +96,7 @@ class TaskExecutor:
         container_id = f"task-{task.task_id}"
         created_container = False
         workspace_volume = None
+        start_time = time.monotonic()
 
         try:
             # Determine resource limits from requirements
@@ -129,6 +131,7 @@ class TaskExecutor:
             container_id = created_container_id
             created_container = True
 
+            start_time = time.monotonic()
             await self.docker_manager.start_container(container_id)
             
             # Wait for completion with timeout
@@ -136,6 +139,7 @@ class TaskExecutor:
                 self.docker_manager.wait_for_container(container_id, timeout=task.timeout),
                 timeout=task.timeout + 10
             )
+            duration_seconds = round(time.monotonic() - start_time, 2)
             
             # Get logs/output
             logs = await self.docker_manager.get_container_logs(container_id, tail=1000)
@@ -155,24 +159,27 @@ class TaskExecutor:
                 except Exception:
                     logger.exception("Failed to remove workspace %s", workspace_volume)
             
-            # Parse result
+            # Parse result (include duration_seconds for time-based credits)
             if result['exit_code'] == 0:
                 await self.task_queue.mark_completed(task.task_id, {
                     'output': logs,
-                    'stats': stats
+                    'stats': stats,
+                    'duration_seconds': duration_seconds,
                 })
                 return {
                     'status': 'completed',
                     'output': logs,
-                    'stats': stats
+                    'stats': stats,
+                    'duration_seconds': duration_seconds,
                 }
             else:
                 error_msg = f"Task failed with exit code {result['exit_code']}"
-                await self.task_queue.mark_failed(task.task_id, error_msg)
+                await self.task_queue.mark_failed(task.task_id, error_msg, result={'duration_seconds': duration_seconds})
                 return {
                     'status': 'failed',
                     'exit_code': result['exit_code'],
-                    'error': logs or error_msg
+                    'error': logs or error_msg,
+                    'duration_seconds': duration_seconds,
                 }
         
         except asyncio.TimeoutError:
@@ -192,15 +199,18 @@ class TaskExecutor:
                     shutil.rmtree(workspace_volume, ignore_errors=True)
                 except Exception:
                     logger.exception("Failed to remove workspace %s on timeout", workspace_volume)
+            duration_seconds = round(time.monotonic() - start_time, 2)
             error_msg = "Task execution timeout"
-            await self.task_queue.mark_failed(task.task_id, error_msg)
+            await self.task_queue.mark_failed(task.task_id, error_msg, result={"duration_seconds": duration_seconds})
             return {
                 'status': 'failed',
-                'error': error_msg
+                'error': error_msg,
+                'duration_seconds': duration_seconds,
             }
         
         except Exception as e:
             # Ensure cleanup
+            duration_seconds = round(time.monotonic() - start_time, 2)
             try:
                 if created_container:
                     await self.docker_manager.remove_container(container_id)
@@ -213,10 +223,11 @@ class TaskExecutor:
                     logger.exception("Failed to remove workspace during exception handling %s", workspace_volume)
             
             error_msg = f"Execution error: {str(e)}"
-            await self.task_queue.mark_failed(task.task_id, error_msg)
+            await self.task_queue.mark_failed(task.task_id, error_msg, result={"duration_seconds": duration_seconds})
             return {
                 'status': 'failed',
-                'error': error_msg
+                'error': error_msg,
+                'duration_seconds': duration_seconds,
             }
     
     async def start_executor(self, max_concurrent: int = 5):

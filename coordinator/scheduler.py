@@ -23,7 +23,7 @@ from .workers import (
     set_worker_idle,
     unregister_worker_ws,
 )
-from .credit_manager import credit, get_worker_reward
+from .credit_manager import settle_job
 import logging
 
 logger = logging.getLogger(__name__)
@@ -177,20 +177,20 @@ def on_job_result(
     exit_code: int,
     stdout: str,
     stderr: str,
+    duration_seconds: Optional[float] = None,
 ) -> None:
-    logger.info(f"on_job_result: Job {job_id} completed on worker {worker_id} (exit_code={exit_code})")
+    logger.info(
+        f"on_job_result: Job {job_id} completed on worker {worker_id} "
+        f"(exit_code={exit_code}, duration_seconds={duration_seconds})"
+    )
+    worker_row = db_get_worker(worker_id)
+    owner_id = (worker_row.get("owner_id") or "").strip() if worker_row else None
+
+    # Time-based settle: refund unused reserve to submitter, credit worker owner
+    settle_job(job_id, owner_id, duration_seconds)
+
     db_set_job_completed(job_id, stdout, stderr, exit_code)
     set_worker_idle(worker_id)
     db_set_worker_status(worker_id, "idle")
 
-    # Credit worker owner when their compute is used
-    worker_row = db_get_worker(worker_id)
-    if worker_row and worker_row.get("owner_id"):
-        owner_id = (worker_row.get("owner_id") or "").strip()
-        if owner_id:
-            reward = get_worker_reward()
-            credit(owner_id, reward)
-            logger.info(f"on_job_result: Credited {reward} to worker owner {owner_id}")
-
-    # Dispatch next job (caller should await dispatch() after this)
     asyncio.create_task(dispatch())

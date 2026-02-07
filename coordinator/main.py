@@ -57,7 +57,7 @@ from coordinator.credit_manager import (
     get_balance,
     deduct,
     credit,
-    get_job_cost
+    get_max_reserve,
 )
 from coordinator.scheduler import job_queue, dispatch, watchdog_loop
 
@@ -188,21 +188,26 @@ async def submit_job(body: Dict[str, Any]) -> Dict[str, Any]:
     # Sanitize inputs
     code = sanitize_string(code, max_length=1_000_000)
     user_id = sanitize_string(user_id, max_length=64)
+
+    # Time-based credits: reserve max cost from job timeout (refund unused when job completes)
+    limits = body.get("limits") or {}
+    timeout_seconds = limits.get("timeout_s") or 60
+    try:
+        timeout_seconds = int(timeout_seconds)
+    except (TypeError, ValueError):
+        timeout_seconds = 60
+    reserved = get_max_reserve(timeout_seconds)
     
     # ========== CREDIT HANDLING ==========
-    cost = get_job_cost()
     ensure_user(user_id)
-    
     current_balance = get_balance(user_id)
-    if current_balance < cost:
+    if current_balance < reserved:
         raise HTTPException(
             HTTP_PAYMENT_REQUIRED,
-            f"Insufficient credits. Need {cost}, have {current_balance}"
+            f"Insufficient credits. Reserve required: {reserved} (based on timeout), have {current_balance}"
         )
     
-    # CRITICAL FIX: Deduct credits FIRST, THEN create job
-    # This prevents the race condition where job is created but credits aren't deducted
-    if not deduct(user_id, cost):
+    if not deduct(user_id, reserved):
         raise HTTPException(
             HTTP_PAYMENT_REQUIRED,
             f"Failed to deduct credits. Balance: {get_balance(user_id)}"
@@ -212,33 +217,30 @@ async def submit_job(body: Dict[str, Any]) -> Dict[str, Any]:
     job_id = generate_job_id()
     
     try:
-        # Create job in database
         db_create_job(
             job_id=job_id,
             user_id=user_id,
             code=code,
             language=language,
-            limits={}
+            limits={"timeout_s": timeout_seconds},
+            reserved_cost=reserved,
         )
         
-        # Queue the job for execution
         await job_queue.put(job_id)
-        
-        # Trigger dispatcher to assign to worker
         await dispatch()
         
-        logger.info(f"Job {job_id} submitted by user {user_id}, cost={cost}")
+        logger.info(f"Job {job_id} submitted by user {user_id}, reserved={reserved} (time-based)")
         
         return {
             "job_id": job_id,
             "status": STATUS_QUEUED,
-            "cost": cost
+            "reserved": reserved,
+            "message": "Charged by compute time when job completes; unused reserve refunded.",
         }
         
     except Exception as e:
-        # IMPORTANT: If job creation fails, refund the credits
-        logger.error(f"Job creation failed: {e}, refunding {cost} credits to {user_id}")
-        credit(user_id, cost)
+        logger.error(f"Job creation failed: {e}, refunding {reserved} credits to {user_id}")
+        credit(user_id, reserved)
         raise HTTPException(
             HTTP_INTERNAL_ERROR,
             f"Job creation failed: {str(e)}"

@@ -36,20 +36,25 @@ async def handle_assign_job(msg, ws, executor: TaskExecutor, queue: TaskQueue):
                 stdout = ""
                 stderr = ""
                 exit_code = 0
+                result_payload = (t.result or {})
 
                 if t.status == TaskStatus.COMPLETED:
-                    stdout = (t.result or {}).get('output', '')
+                    stdout = result_payload.get('output', '')
                 else:
-                    stderr = t.error or (t.result or {}).get('error', '')
+                    stderr = t.error or result_payload.get('error', '')
                     exit_code = 1
 
-                await ws.send(json.dumps({
+                payload = {
                     "type": "job_result",
                     "job_id": tid,
                     "exit_code": exit_code,
                     "stdout": stdout,
                     "stderr": stderr,
-                }))
+                }
+                duration = result_payload.get("duration_seconds")
+                if duration is not None:
+                    payload["duration_seconds"] = duration
+                await ws.send(json.dumps(payload))
                 return
 
             await asyncio.sleep(0.5)

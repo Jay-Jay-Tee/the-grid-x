@@ -105,13 +105,15 @@ class TaskQueue:
                 task.result = result
                 self.completed_tasks[task_id] = task
     
-    async def mark_failed(self, task_id: str, error: str):
-        """Mark task as failed"""
+    async def mark_failed(self, task_id: str, error: str, result: Optional[Dict] = None):
+        """Mark task as failed. Optional result can include duration_seconds for time-based credits."""
         async with self._lock:
             if task_id in self.active_tasks:
                 task = self.active_tasks.pop(task_id)
                 task.status = TaskStatus.FAILED
                 task.error = error
+                if result is not None:
+                    task.result = result
                 self.completed_tasks[task_id] = task
     
     async def cancel_task(self, task_id: str) -> bool:

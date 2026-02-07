@@ -134,9 +134,15 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                     exit_code = int(msg.get("exit_code") or 0)
                     stdout = msg.get("stdout", "")
                     stderr = msg.get("stderr", "")
+                    duration_seconds = msg.get("duration_seconds")
+                    if duration_seconds is not None:
+                        try:
+                            duration_seconds = float(duration_seconds)
+                        except (TypeError, ValueError):
+                            duration_seconds = None
 
                     if job_id:
-                        on_job_result(job_id, worker_id, exit_code, stdout, stderr)
+                        on_job_result(job_id, worker_id, exit_code, stdout, stderr, duration_seconds)
 
                     await dispatch()
                     continue
