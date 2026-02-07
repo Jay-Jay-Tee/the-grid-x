@@ -480,6 +480,18 @@ async def admin_overview(limit: int = 50) -> Dict[str, Any]:
     limit = min(max(int(limit), 1), 200)
 
     workers = db_list_workers()
+    worker_ids = {w["id"] for w in workers}
+    # Include connected workers that may not yet be in DB
+    for wid, entry in workers_ws.items():
+        if wid not in worker_ids:
+            workers.append({
+                "id": wid,
+                "owner_id": entry.get("owner_id") or "",
+                "status": entry.get("status") or "idle",
+                "ip": "connected",
+                "last_heartbeat": entry.get("last_seen"),
+                "restriction": None,
+            })
     running_jobs = db_list_jobs_with_workers(["running"], limit)
     queued_jobs = db_list_jobs_with_workers(["queued"], limit)
     recent_jobs = db_list_recent_jobs(limit)
@@ -513,12 +525,36 @@ async def admin_disconnect_worker(worker_id: str) -> Dict[str, Any]:
     return {"success": True, "worker_id": worker_id}
 
 
+def _ensure_worker_exists_for_restriction(worker_id: str) -> bool:
+    """Ensure worker row exists (create from workers_ws if connected but not in DB). Return True if exists."""
+    if db_get_worker(worker_id):
+        return True
+    # Worker may be connected but not yet in DB - get from workers_ws and insert
+    entry = workers_ws.get(worker_id)
+    if entry:
+        owner_id = entry.get("owner_id") or ""
+        caps = entry.get("caps") or {}
+        import json
+        conn = get_db()
+        conn.execute(
+            """
+            INSERT INTO workers (id, owner_id, ip, caps, status, registered_at, last_heartbeat)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            (worker_id, owner_id, "unknown", json.dumps(caps), "offline", now(), now()),
+        )
+        conn.commit()
+        return True
+    return False
+
+
 @app.post("/admin/workers/{worker_id}/ban")
 async def admin_ban_worker(worker_id: str) -> Dict[str, Any]:
     """Ban a worker - disconnect if connected and prevent future connections."""
     if not validate_uuid(worker_id):
         raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
-    if not db_get_worker(worker_id):
+    if not _ensure_worker_exists_for_restriction(worker_id):
         raise HTTPException(HTTP_NOT_FOUND, "Worker not found")
     await disconnect_worker(worker_id)
     db_set_worker_restriction(worker_id, "banned")
@@ -530,7 +566,7 @@ async def admin_suspend_worker(worker_id: str) -> Dict[str, Any]:
     """Suspend a worker - disconnect if connected and prevent connections until unsuspended."""
     if not validate_uuid(worker_id):
         raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
-    if not db_get_worker(worker_id):
+    if not _ensure_worker_exists_for_restriction(worker_id):
         raise HTTPException(HTTP_NOT_FOUND, "Worker not found")
     await disconnect_worker(worker_id)
     db_set_worker_restriction(worker_id, "suspended")
@@ -542,7 +578,7 @@ async def admin_unsuspend_worker(worker_id: str) -> Dict[str, Any]:
     """Remove suspend restriction from a worker."""
     if not validate_uuid(worker_id):
         raise HTTPException(HTTP_BAD_REQUEST, "Invalid worker ID format")
-    if not db_get_worker(worker_id):
+    if not _ensure_worker_exists_for_restriction(worker_id):
         raise HTTPException(HTTP_NOT_FOUND, "Worker not found")
     db_set_worker_restriction(worker_id, None)
     return {"success": True, "worker_id": worker_id, "restriction": None}

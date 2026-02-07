@@ -166,6 +166,21 @@ def init_db() -> None:
             logger.info("Added restriction column to workers")
     except Exception as e:
         logger.debug(f"Migration workers restriction: {e}")
+
+    # Migration: ensure user_credits has total_earned and total_spent
+    try:
+        cur = conn.execute("PRAGMA table_info(user_credits)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "total_earned" not in cols:
+            conn.execute("ALTER TABLE user_credits ADD COLUMN total_earned REAL DEFAULT 0.0")
+            conn.commit()
+            logger.info("Added total_earned to user_credits")
+        if "total_spent" not in cols:
+            conn.execute("ALTER TABLE user_credits ADD COLUMN total_spent REAL DEFAULT 0.0")
+            conn.commit()
+            logger.info("Added total_spent to user_credits")
+    except Exception as e:
+        logger.debug(f"Migration user_credits: {e}")
     
     conn.commit()
     logger.info("Database schema initialized")
@@ -658,7 +673,7 @@ def db_list_users(limit: int = 100) -> List[Dict[str, Any]]:
     """List users with balances for admin views."""
     limit = max(1, min(limit, 500))
     rows = get_db().execute(
-        "SELECT user_id, balance, total_earned, total_spent, last_updated "
+        "SELECT user_id, balance, COALESCE(total_earned,0) AS total_earned, COALESCE(total_spent,0) AS total_spent, last_updated "
         "FROM user_credits ORDER BY balance DESC LIMIT ?",
         (limit,),
     ).fetchall()

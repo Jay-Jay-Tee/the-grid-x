@@ -38,7 +38,7 @@ def ensure_user(user_id: str, initial_balance: Optional[float] = None) -> float:
     if row is not None:
         return float(row[0])
     DB.execute(
-        "INSERT INTO user_credits(user_id, balance, last_updated) VALUES(?,?,?)",
+        "INSERT INTO user_credits(user_id, balance, total_earned, total_spent, last_updated) VALUES(?,?,0,0,?)",
         (user_id, initial_balance, now()),
     )
     DB.commit()
@@ -146,10 +146,11 @@ def settle_job(
         logger.info(f"settle_job: Job {job_id} refunded {refund} to {user_id} (reserved={reserved}, actual={actual_cost})")
 
     # Update total_spent for submitter (actual cost charged)
+    # Use COALESCE to handle NULL from older rows
     if actual_cost > 0 and user_id:
         conn = get_db()
         conn.execute(
-            "UPDATE user_credits SET total_spent=total_spent+?, last_updated=? WHERE user_id=?",
+            "UPDATE user_credits SET total_spent=COALESCE(total_spent,0)+?, last_updated=? WHERE user_id=?",
             (actual_cost, now(), user_id),
         )
         conn.commit()
@@ -161,7 +162,7 @@ def settle_job(
             credit(owner_id, reward)
             conn = get_db()
             conn.execute(
-                "UPDATE user_credits SET total_earned=total_earned+?, last_updated=? WHERE user_id=?",
+                "UPDATE user_credits SET total_earned=COALESCE(total_earned,0)+?, last_updated=? WHERE user_id=?",
                 (reward, now(), owner_id),
             )
             conn.commit()
