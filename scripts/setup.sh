@@ -124,18 +124,39 @@ fi
 echo ""
 
 ###############################################################################
-# Initialize Database
+# Initialize Database (clean + create fresh)
 ###############################################################################
 
-echo -e "${YELLOW}Initializing database...${NC}"
+echo -e "${YELLOW}Initializing database (cleaning existing gridx.db and creating fresh)...${NC}"
 
 cd "$PROJECT_ROOT"
 python3 << 'EOF'
 import sys
+import os
 sys.path.insert(0, '.')
+
+# Load .env so GRIDX_DB_PATH is respected
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+db_path = os.getenv("GRIDX_DB_PATH", "./data/gridx.db")
+if not os.path.isabs(db_path):
+    db_path = os.path.normpath(os.path.join(os.getcwd(), db_path))
+
+if os.path.isfile(db_path):
+    os.remove(db_path)
+    print("✓ Removed existing database")
+
+db_dir = os.path.dirname(db_path)
+if db_dir:
+    os.makedirs(db_dir, exist_ok=True)
+
 from coordinator.database import db_init
 db_init()
-print("✓ Database initialized")
+print("✓ Database initialized (fresh)")
 EOF
 
 echo ""

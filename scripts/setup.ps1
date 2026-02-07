@@ -65,6 +65,41 @@ if (Test-Path "requirements.txt") {
 }
 
 Write-Host ""
+Write-Host "Initializing database (cleaning existing gridx.db and creating fresh)..." -ForegroundColor Yellow
+
+$dbScript = @"
+import sys
+import os
+sys.path.insert(0, '.')
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+db_path = os.getenv('GRIDX_DB_PATH', './data/gridx.db')
+if not os.path.isabs(db_path):
+    db_path = os.path.normpath(os.path.join(os.getcwd(), db_path))
+if os.path.isfile(db_path):
+    os.remove(db_path)
+    print('Removed existing database')
+db_dir = os.path.dirname(db_path)
+if db_dir:
+    os.makedirs(db_dir, exist_ok=True)
+from coordinator.database import db_init
+db_init()
+print('Database initialized (fresh)')
+"@
+$tempScript = [System.IO.Path]::GetTempFileName() + ".py"
+$dbScript | Set-Content -Path $tempScript -Encoding UTF8
+try {
+    python $tempScript
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    Write-Host "Database ready" -ForegroundColor Green
+} finally {
+    Remove-Item $tempScript -ErrorAction SilentlyContinue
+}
+Write-Host ""
+
 Write-Host "Setup complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "To start the coordinator:"

@@ -37,9 +37,9 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
             except json.JSONDecodeError:
                 continue
 
-            try:
-                t = msg.get("type")
+            t = msg.get("type")
 
+            try:
                 if t == "hello":
                     incoming_worker_id = msg.get("worker_id") or str(uuid.uuid4())
                     caps = msg.get("caps", {"cpu_cores": 0, "gpu": False})
@@ -50,12 +50,12 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                     if auth_token and owner_id:
                         # Check if user already has credentials registered
                         user_exists = db_verify_user_auth(owner_id, auth_token)
-                        
+
                         if user_exists:
                             # User exists and password is correct
                             # Check if they have an existing worker
                             existing_worker = db_get_worker_by_auth(owner_id, auth_token)
-                            
+
                             if existing_worker:
                                 # Reconnecting with existing worker
                                 worker_id = existing_worker['id']
@@ -69,7 +69,7 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                             existing_user = get_db().execute(
                                 "SELECT user_id FROM user_auth WHERE user_id=?", (owner_id,)
                             ).fetchone()
-                            
+
                             if existing_user:
                                 # User exists but password is WRONG - REJECT
                                 print(f"❌ Authentication failed for user: {owner_id} (wrong password)")
@@ -89,7 +89,7 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                         print(f"⚠️  Worker {worker_id[:12]}... connected without authentication")
 
                     async with lock:
-                        register_worker_ws(worker_id, ws, caps, owner_id)
+                        register_worker_ws(worker_id, ws, caps, owner_id=owner_id)
 
                     db_upsert_worker(worker_id, peer_ip, caps, "idle", owner_id=owner_id, auth_token=auth_token)
 
@@ -100,19 +100,18 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                         # This is a race condition - worker likely timed out waiting
                         print(f"⚠️  Worker {worker_id[:12]}... closed connection during handshake (timeout?)")
                         return
-                    except websockets.exceptions.ConnectionClosed as e:
-                        # Connection was closed unexpectedly
-                        print(f"⚠️  Worker {worker_id[:12]}... connection closed: {e}")
-                        return
-                    
+
+                    # Trigger dispatch after successful hello
                     await dispatch()
                     continue
 
+                # Any messages after hello need a registered worker_id
                 if not worker_id:
                     continue
 
                 async with lock:
                     update_worker_last_seen(worker_id)
+
                 # Keep DB in sync with in-memory status
                 from .workers import workers_ws
                 wstatus = (workers_ws.get(worker_id) or {}).get("status", "idle")
@@ -142,6 +141,14 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
                     await dispatch()
                     continue
 
+            except websockets.exceptions.ConnectionClosed as e:
+                # Connection was closed unexpectedly
+                try:
+                    print(f"⚠️  Worker {worker_id[:12]}... connection closed: {e}")
+                except Exception:
+                    print(f"⚠️  Worker connection closed: {e}")
+                return
+
             except Exception as e:
                 print(f"❌ Error handling message from worker {worker_id or 'unknown'}: {e}")
                 import traceback
@@ -156,39 +163,52 @@ async def handle_worker(ws: WebSocketServerProtocol) -> None:
         print(f"❌ Unexpected error in worker handler: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        if worker_id:
-            async with lock:
-                unregister_worker_ws(worker_id)
+
+    # Cleanup on disconnect
+    if worker_id:
+        async with lock:
+            unregister_worker_ws(worker_id)
+        try:
             db_set_worker_offline(worker_id)
+        except Exception:
+            pass
 
-            # Requeue any jobs that were marked running on this worker
-            try:
-                conn = get_db()
-                rows = conn.execute(
-                    "SELECT id FROM jobs WHERE status=? AND worker_id=?",
-                    ("running", worker_id),
-                ).fetchall()
+        # Requeue any jobs that were marked running on this worker
+        try:
+            conn = get_db()
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE status=? AND worker_id=?",
+                ("running", worker_id),
+            ).fetchall()
 
-                for r in rows:
-                    job_id = r["id"]
-                    conn.execute(
-                        "UPDATE jobs SET status=?, worker_id=? WHERE id=?",
-                        ("queued", None, job_id),
-                    )
-                    conn.commit()
-                    # Put back on in-memory queue for dispatch
-                    try:
-                        await job_queue.put(job_id)
-                    except Exception:
-                        pass
+            for r in rows:
+                job_id = r["id"]
+                conn.execute(
+                    "UPDATE jobs SET status=?, worker_id=? WHERE id=?",
+                    ("queued", None, job_id),
+                )
+                conn.commit()
+                # Put back on in-memory queue for dispatch
+                try:
+                    await job_queue.put(job_id)
+                except Exception:
+                    pass
 
-                if rows:
+            if rows:
+                try:
                     print(f"⚠️  Requeued {len(rows)} job(s) from disconnected worker {worker_id[:12]}...")
-            except Exception as e:
+                except Exception:
+                    print(f"⚠️  Requeued jobs from disconnected worker")
+        except Exception as e:
+            try:
                 print(f"⚠️  Error requeuing jobs from {worker_id[:12]}: {e}")
+            except Exception:
+                print(f"⚠️  Error requeuing jobs from worker: {e}")
 
+        try:
             print(f"✗ Worker {worker_id[:12]}... disconnected")
+        except Exception:
+            print("✗ Worker disconnected")
 
 
 async def ws_router(ws: WebSocketServerProtocol, path: Optional[str] = None) -> None:

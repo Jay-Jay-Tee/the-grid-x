@@ -180,11 +180,7 @@ async def submit_job(body: Dict[str, Any]) -> Dict[str, Any]:
     language = body.get("language", DEFAULT_LANGUAGE)
     if language not in ["python", "javascript", "node", "bash"]:
         raise HTTPException(HTTP_BAD_REQUEST, f"Unsupported language: {language}")
-    
-    # Only python supported in this version
-    if language != "python":
-        raise HTTPException(HTTP_BAD_REQUEST, "Only Python is supported in this version")
-    
+
     user_id = body.get("user_id", "demo")
     if not validate_user_id(user_id):
         raise HTTPException(HTTP_BAD_REQUEST, f"Invalid user_id: {user_id}")
