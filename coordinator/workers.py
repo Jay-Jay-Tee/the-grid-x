@@ -5,7 +5,7 @@ Grid-X Coordinator - Worker registry management (in-memory WS state + DB).
 import asyncio
 from typing import Any, Dict, Optional
 
-from database import now
+from .database import now
 
 # In-memory: worker_id -> {ws, caps, status, last_seen}
 workers_ws: Dict[str, Dict[str, Any]] = {}

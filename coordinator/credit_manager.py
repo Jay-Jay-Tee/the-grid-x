@@ -6,7 +6,7 @@ Tokens decrease when you use compute; they increase when your compute is used by
 import os
 from typing import Optional
 
-from database import get_db, now
+from .database import get_db, now
 
 # Default starting balance for new users
 DEFAULT_INITIAL_BALANCE = float(os.getenv("GRIDX_INITIAL_CREDITS", "100.0"))

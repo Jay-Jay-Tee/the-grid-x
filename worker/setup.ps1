@@ -291,39 +291,5 @@ Start-Sleep -Seconds 2
 ###############################################################################
 
 Push-Location $ProjectRoot
-
-try {
-    # Start worker with all parameters
-    python -m worker.main `
-        --user $UserId `
-        --password $Password `
-        --coordinator-ip $CoordinatorIp `
-        --http-port $HttpPort `
-        --ws-port $WsPort
-} catch {
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor $Red
-    Write-Host " Worker stopped with error" -ForegroundColor $Red
-    Write-Host "============================================================" -ForegroundColor $Red
-    Write-Host ""
-    Write-Host "Error: $_" -ForegroundColor $Red
-    Write-Host ""
-    Write-Host "Troubleshooting:" -ForegroundColor $Yellow
-    Write-Host "  1. Verify the coordinator is running" -ForegroundColor $Gray
-    Write-Host "  2. Check your username and password" -ForegroundColor $Gray
-    Write-Host "  3. Verify Docker is running" -ForegroundColor $Gray
-    Write-Host "  4. Check firewall settings" -ForegroundColor $Gray
-    Write-Host "  5. Review logs in the worker directory" -ForegroundColor $Gray
-    Write-Host ""
-    exit 1
-} finally {
-    Pop-Location
-}
-
-Write-Host ""
-Write-Host "============================================================" -ForegroundColor $Blue
-Write-Host " Worker stopped gracefully" -ForegroundColor $Blue
-Write-Host "============================================================" -ForegroundColor $Blue
-Write-Host ""
-Write-Host "Thank you for contributing compute resources to Grid-X!" -ForegroundColor $Green
-Write-Host ""
+python -m worker.main --user $UserId --coordinator-ip $CoordinatorIp --http-port $HttpPort --ws-port $WsPort
+Pop-Location
